@@ -284,7 +284,6 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
     return (
       <main className="min-h-screen bg-[#050505] text-[#f5f5f7]">
         <div className="mx-auto flex min-h-screen w-full max-w-[390px] flex-col overflow-hidden bg-[#050505]">
-          <StatusBar />
           <section ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-12 pt-4">
             <OnboardingScreen
               tasks={taskRows}
@@ -307,7 +306,6 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
   return (
     <main className="min-h-screen bg-[#050505] text-[#f5f5f7]">
       <div className="mx-auto flex min-h-screen w-full max-w-[390px] flex-col overflow-hidden bg-[#050505]">
-        <StatusBar />
         <section ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-32 pt-4">
           {activeTab === "home" && (
             <HomeScreen
@@ -359,15 +357,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
   );
 }
 
-function StatusBar() {
-  return (
-    <div className="flex h-16 shrink-0 items-center justify-between px-7 pt-2">
-      <span className="text-[15px] font-black">9:41</span>
-      <span className="h-[22px] w-[146px] rounded-full bg-[#17171c]" />
-      <span className="w-10" />
-    </div>
-  );
-}
+
 
 function HomeScreen({
   tasks,
