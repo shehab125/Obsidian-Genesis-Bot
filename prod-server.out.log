@@ -1,0 +1,8 @@
+
+> mini-app-tel@0.1.0 start
+> next start --port 3000
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.4:3000
+✓ Ready in 225ms
