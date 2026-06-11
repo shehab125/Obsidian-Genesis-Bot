@@ -306,6 +306,27 @@ export function AdminDashboard({
                     setSettingsForm((current) => ({ ...current, tokenUsdPrice: value }))
                   }
                 />
+                <SettingText
+                  label="OBSD Token Contract Address (Polygon)"
+                  value={settingsForm.tokenContractAddress || ""}
+                  onChange={(value) =>
+                    setSettingsForm((current) => ({ ...current, tokenContractAddress: value }))
+                  }
+                />
+                <SettingText
+                  label="QuickSwap OBSD Swap Link"
+                  value={settingsForm.quickswapLink || ""}
+                  onChange={(value) =>
+                    setSettingsForm((current) => ({ ...current, quickswapLink: value }))
+                  }
+                />
+                <SettingText
+                  label="Owner Wallet Address"
+                  value={settingsForm.ownerWallet || ""}
+                  onChange={(value) =>
+                    setSettingsForm((current) => ({ ...current, ownerWallet: value }))
+                  }
+                />
                 <SettingNumber
                   label="Withdrawal lock days"
                   value={settingsForm.withdrawalLockDays || 0}
@@ -446,6 +467,9 @@ export function AdminDashboard({
                     <div className="flex items-center gap-3">
                       <div className="text-right text-sm">
                         <p className="font-black text-[#d69a2d]">{row.balance} OBSD</p>
+                        <p className="text-[10px] text-[#31d67b] font-bold">
+                          {row.miningCyclesCompleted || 0} cycles
+                        </p>
                         <p className="text-xs text-[#94a3b8]">
                           {row.purchaseVerified ? "Verified purchase" : "Purchase pending"}
                         </p>
@@ -615,6 +639,28 @@ function SettingNumber({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
+        className="h-10 rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 outline-none focus:border-[#d69a2d]"
+      />
+    </label>
+  );
+}
+
+function SettingText({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-sm text-[#cbd5e1]">
+      {label}
+      <input
+        type="text"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
         className="h-10 rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 outline-none focus:border-[#d69a2d]"
       />
     </label>

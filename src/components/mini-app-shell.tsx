@@ -59,12 +59,39 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
   const [purchaseProofUrl, setPurchaseProofUrl] = useState("");
   const scrollRef = useRef<HTMLElement | null>(null);
 
+  const [activeMiningSession, setActiveMiningSession] = useState<{
+    id: string;
+    userId: string;
+    startedAt: string;
+    endsAt: string;
+    claimed: boolean;
+    rewardUsd: number;
+    rewardTokens: number;
+  } | null>(null);
+  const [lastSessionStart, setLastSessionStart] = useState<string | null>(null);
+
+  const fetchActiveMiningSession = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/mining/active?userId=${userId}`);
+      const payload = await res.json();
+      if (payload.ok) {
+        setActiveMiningSession(payload.session);
+        setLastSessionStart(payload.lastSessionStart);
+      }
+    } catch (err) {
+      console.error("Failed to fetch active mining session:", err);
+    }
+  };
+
   useEffect(() => {
     const telegramWebApp = window.Telegram?.WebApp;
     telegramWebApp?.ready?.();
 
     const initData = telegramWebApp?.initData;
     if (!initData) {
+      if (user.id) {
+        fetchActiveMiningSession(user.id);
+      }
       return;
     }
 
@@ -90,6 +117,9 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
         setWithdrawAmount(String(payload.settings.minimumWithdrawalPoints));
         setSessionReady(true);
         setMessage("TELEGRAM SESSION VERIFIED");
+
+        // Fetch active mining session
+        fetchActiveMiningSession(payload.user.id);
       })
       .catch(() => setMessage("Could not load Telegram session."));
   }, []);
@@ -108,7 +138,69 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
 
   function changeTab(tab: Tab) {
     setActiveTab(tab);
+    if (tab === "mining" && currentUser.id) {
+      fetchActiveMiningSession(currentUser.id);
+    }
     scrollToTop();
+  }
+
+  async function startMining() {
+    if (!sessionReady || !currentUser.id) return;
+    try {
+      const response = await fetch("/api/mining/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser.id }),
+      });
+      const payload = await response.json();
+      setMessage(payload.message);
+      if (payload.ok && payload.session) {
+        setActiveMiningSession(payload.session);
+        // Refresh session user data
+        const res = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: window.Telegram?.WebApp?.initData })
+        });
+        const p = await res.json();
+        if (p.ok) {
+          setCurrentUser(p.user);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function claimMining() {
+    if (!sessionReady || !currentUser.id) return;
+    try {
+      const response = await fetch("/api/mining/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser.id }),
+      });
+      const payload = await response.json();
+      setMessage(payload.message);
+      if (payload.ok) {
+        setActiveMiningSession(null);
+        if (payload.balance !== undefined) setBalance(payload.balance);
+        if (payload.pendingBalance !== undefined) setPendingBalance(payload.pendingBalance);
+        if (payload.withdrawableBalance !== undefined) setWithdrawableBalance(payload.withdrawableBalance);
+        if (payload.miningCyclesCompleted !== undefined) {
+          setCurrentUser((curr) => ({
+            ...curr,
+            miningCyclesCompleted: payload.miningCyclesCompleted,
+            balance: payload.balance ?? curr.balance,
+            pendingBalance: payload.pendingBalance ?? curr.pendingBalance,
+            withdrawableBalance: payload.withdrawableBalance ?? curr.withdrawableBalance,
+          }));
+        }
+        fetchActiveMiningSession(currentUser.id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   async function verifyTelegramTask(taskId: string) {
@@ -241,21 +333,43 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
       setMessage("Open from Telegram first.");
       return;
     }
-    if (!walletAddress.trim() || !purchaseProofUrl.trim()) {
-      setMessage("Add wallet address and proof image/link URL first.");
+    if (!walletAddress.trim()) {
+      setMessage("Please input your wallet address first.");
       return;
     }
-    const response = await fetch("/api/purchase-verification", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: currentUser.id,
-        walletAddress,
-        proofUrl: purchaseProofUrl,
-      }),
-    });
-    const payload = await response.json();
-    setMessage(payload.message);
+    setMessage("Verifying OBSD purchase on Polygon... Please wait.");
+    try {
+      const response = await fetch("/api/purchase-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          walletAddress: walletAddress.trim(),
+        }),
+      });
+      const payload = await response.json();
+      setMessage(payload.message);
+      if (payload.ok) {
+        // Refresh session to apply multiplier and withdrawal state
+        const res = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: window.Telegram?.WebApp?.initData })
+        });
+        const p = await res.json();
+        if (p.ok) {
+          setCurrentUser(p.user);
+          setBalance(p.user.balance);
+          setPendingBalance(p.user.pendingBalance);
+          setWithdrawableBalance(p.user.withdrawableBalance);
+          // Refetch active mining session to clear locked status
+          fetchActiveMiningSession(p.user.id);
+        }
+      }
+    } catch (err) {
+      setMessage("Verification failed. Please try again.");
+      console.error(err);
+    }
     scrollToTop();
   }
 
@@ -318,15 +432,24 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               submitProof={submitProof}
               goMining={() => changeTab("mining")}
               sessionReady={sessionReady}
+              miningCyclesCompleted={currentUser.miningCyclesCompleted}
+              purchaseVerified={currentUser.purchaseVerified}
+              changeTab={changeTab}
             />
           )}
           {activeTab === "mining" && (
             <MiningScreen
-              balance={balance}
-              pendingBalance={pendingBalance}
-              withdrawableBalance={withdrawableBalance}
-              purchaseVerified={currentUser.purchaseVerified}
+              user={currentUser}
+              activeSession={activeMiningSession}
+              lastSessionStart={lastSessionStart}
               tokenUsdPrice={appSettings.tokenUsdPrice}
+              onStartMining={startMining}
+              onClaimMining={claimMining}
+              changeTab={changeTab}
+              walletAddress={walletAddress}
+              setWalletAddress={setWalletAddress}
+              submitPurchaseVerification={submitPurchaseVerification}
+              settings={appSettings}
             />
           )}
           {activeTab === "wallet" && (
@@ -369,6 +492,9 @@ function HomeScreen({
   submitProof,
   goMining,
   sessionReady,
+  miningCyclesCompleted,
+  purchaseVerified,
+  changeTab,
 }: {
   tasks: Task[];
   progress: number;
@@ -379,7 +505,18 @@ function HomeScreen({
   submitProof: (taskId: string) => Promise<void>;
   goMining: () => void;
   sessionReady: boolean;
+  miningCyclesCompleted: number;
+  purchaseVerified: boolean;
+  changeTab: (tab: any) => void;
 }) {
+  const isMiningLocked = miningCyclesCompleted === 0;
+
+  // Find social media tasks
+  const socialTasks = tasks.filter((t) => t.isSocialMedia);
+  const otherTasks = tasks.filter((t) => !t.isSocialMedia && !t.isOnboarding);
+
+  const allSocialTasksDone = socialTasks.length > 0 && socialTasks.every((t) => t.status === "completed");
+
   return (
     <div className="pt-6">
       <div className="mx-auto mb-6 h-[70px] w-[50px] bg-[linear-gradient(135deg,#ff8a00,#31d67b)] [clip-path:polygon(50%_0,100%_50%,50%_100%,0_50%)]">
@@ -388,186 +525,525 @@ function HomeScreen({
 
       <div className="text-center">
         <h1 className="text-[28px] font-black leading-none tracking-tight">OBSIDIAN GENESIS</h1>
-        <p className="mt-3 text-[13px] font-black text-[#ff8a00]">POLYGON LAYER-3 ECOSYSTEM</p>
+        <p className="mt-3 text-[13px] font-black text-[#ff8a00]">POLYGON L3 NETWORK NODE</p>
       </div>
 
-      <section className="mt-10 rounded-[20px] bg-[#17171c] p-5">
-        <div className="flex items-center justify-between text-[15px] font-black">
-          <span>Onboarding Progress</span>
-          <span>{progress}% Complete</span>
-        </div>
-        <div className="mt-4 h-2 rounded-full bg-[#241a42]">
-          <div
-            className="h-2 rounded-full bg-[linear-gradient(90deg,#f5f5f7,#ff8a00)]"
-            style={{ width: `${Math.max(progress, 8)}%` }}
-          />
-        </div>
-      </section>
+      {isMiningLocked && (
+        <section className="mt-8 rounded-[20px] border border-yellow-500/20 bg-yellow-950/10 p-5 text-center">
+          <p className="text-sm font-black text-yellow-500">🔒 Social Media Tasks Locked</p>
+          <p className="mt-2 text-xs text-gray-400 leading-relaxed">
+            You must complete your first 1-hour mining cycle to unlock these tasks and accumulate OBSD.
+          </p>
+          <button
+            onClick={() => changeTab("mining")}
+            className="mt-4 px-5 py-2.5 bg-[#d69a2d] hover:bg-[#b07e20] text-xs font-black text-white rounded-xl transition duration-200"
+          >
+            Start Mining Now
+          </button>
+        </section>
+      )}
 
-      <p className="mt-4 text-center text-xs font-bold text-[#6b7280]">{message}</p>
+      {!isMiningLocked && !purchaseVerified && allSocialTasksDone && (
+        <section className="mt-8 rounded-[20px] border border-[#ff8a00]/30 bg-[#ff8a00]/5 p-5 text-center shadow-[0_0_30px_rgba(255,138,0,0.05)]">
+          <p className="text-sm font-black text-[#ff8a00]">🚀 Social Tasks Complete!</p>
+          <p className="mt-2 text-xs text-gray-400 leading-relaxed">
+            To start your next mining cycle, activate your 2x boost, and enable withdrawals, please buy $5-$10 of OBSD on QuickSwap and submit verification in the Wallet tab.
+          </p>
+          <button
+            onClick={() => changeTab("wallet")}
+            className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d67300] text-xs font-black text-white rounded-xl transition duration-200"
+          >
+            Go to Wallet Verification
+          </button>
+        </section>
+      )}
 
-      <div className="mt-5 space-y-3">
-        {tasks.map((task) => {
-          const complete = task.status === "completed";
-          const pending = task.status === "pending_review";
-          return (
-            <article
-              key={task.id}
-              className={`rounded-[16px] border p-4 ${
-                complete
-                  ? "border-[#10b981] bg-[#121216]"
-                  : "border-[#ff8a00] bg-[#0b0b0d]"
-              }`}
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className={`grid size-12 shrink-0 place-items-center rounded-full ${
-                    complete ? "bg-[#0b3a2c] text-[#31d67b]" : "bg-[#3a2b0b] text-[#ff8a00]"
+      {message && <p className="mt-4 text-center text-xs font-bold text-[#ff8a00]">{message}</p>}
+
+      <div className="mt-8 space-y-4">
+        {/* Render Social Tasks first */}
+        {socialTasks.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-black text-[#ff8a00] uppercase tracking-wider">Social Tasks</h3>
+            {socialTasks.map((task) => {
+              const complete = task.status === "completed";
+              const pending = task.status === "pending_review";
+              const locked = isMiningLocked;
+
+              return (
+                <article
+                  key={task.id}
+                  className={`rounded-[16px] border p-4 transition-all duration-200 ${
+                    locked
+                      ? "border-[#23232a] bg-[#0c0c0e] opacity-40"
+                      : complete
+                        ? "border-[#10b981] bg-[#121216]"
+                        : "border-[#ff8a00] bg-[#0b0b0d]"
                   }`}
                 >
-                  {complete ? <Check size={24} strokeWidth={4} /> : <span className="text-2xl">!</span>}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-[15px] font-black leading-tight">{task.title}</h2>
-                  <p className="mt-1 text-[12px] text-[#a1a1aa]">+{task.reward} OBSD</p>
-                </div>
-                <a
-                  href={task.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
-                  title="Open task"
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`grid size-12 shrink-0 place-items-center rounded-full ${
+                        locked
+                          ? "bg-gray-850 text-gray-600"
+                          : complete
+                            ? "bg-[#0b3a2c] text-[#31d67b]"
+                            : "bg-[#3a2b0b] text-[#ff8a00]"
+                      }`}
+                    >
+                      {complete ? <Check size={24} strokeWidth={4} /> : <span className="text-2xl font-black">{locked ? "🔒" : "!"}</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-[15px] font-black leading-tight text-white">{task.title}</h2>
+                      <p className="mt-1 text-[12px] text-[#a1a1aa] font-bold">
+                        +{task.reward} OBSD (~$0.10)
+                      </p>
+                    </div>
+                    {!locked && !complete && task.url && (
+                      <a
+                        href={task.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                        title="Open task"
+                      >
+                        <ExternalLink size={16} />
+                        Open
+                      </a>
+                    )}
+                    {locked ? (
+                      <span className="text-xs font-black text-gray-500">Locked</span>
+                    ) : complete ? (
+                      <span className="rounded-full bg-[#0b3a2c] px-4 py-2 text-xs font-black text-[#31d67b]">
+                        Verified
+                      </span>
+                    ) : task.platform === "telegram" ? (
+                      <button
+                        type="button"
+                        onClick={() => verifyTelegramTask(task.id)}
+                        disabled={!sessionReady}
+                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                      >
+                        Verify
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => submitProof(task.id)}
+                        disabled={!sessionReady || pending}
+                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                      >
+                        {pending ? "Submitted" : "Submit"}
+                      </button>
+                    )}
+                  </div>
+                  {!locked && task.proofRequired && !complete && !pending && (
+                    <input
+                      value={proofs[task.id] ?? ""}
+                      onChange={(event) =>
+                        setProofs((current) => ({ ...current, [task.id]: event.target.value }))
+                      }
+                      placeholder="Paste proof image/link URL"
+                      className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
+                    />
+                  )}
+                  {!locked && pending && (
+                    <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
+                      Submitted. Waiting for admin review.
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Other Tasks */}
+        {otherTasks.length > 0 && (
+          <div className="space-y-3 pt-4">
+            <h3 className="text-xs font-black text-[#a1a1aa] uppercase tracking-wider">Other Tasks</h3>
+            {otherTasks.map((task) => {
+              const complete = task.status === "completed";
+              const pending = task.status === "pending_review";
+              return (
+                <article
+                  key={task.id}
+                  className={`rounded-[16px] border p-4 ${
+                    complete ? "border-[#10b981] bg-[#121216]" : "border-[#23232a] bg-[#0b0b0d]"
+                  }`}
                 >
-                  <ExternalLink size={17} />
-                  Open
-                </a>
-                {complete ? (
-                  <span className="rounded-full bg-[#0b3a2c] px-4 py-2 text-xs font-black text-[#31d67b]">
-                    Verified
-                  </span>
-                ) : task.platform === "telegram" ? (
-                  <button
-                    type="button"
-                    onClick={() => verifyTelegramTask(task.id)}
-                    disabled={!sessionReady}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black"
-                  >
-                    Verify
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => submitProof(task.id)}
-                    disabled={!sessionReady || pending}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black"
-                  >
-                    {pending ? "Submitted" : "Submit"}
-                  </button>
-                )}
-              </div>
-              {task.proofRequired && !complete && !pending && (
-                <input
-                  value={proofs[task.id] ?? ""}
-                  onChange={(event) =>
-                    setProofs((current) => ({ ...current, [task.id]: event.target.value }))
-                  }
-                  placeholder="Paste proof image/link URL"
-                  className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
-                />
-              )}
-              {pending && (
-                <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
-                  Submitted. Waiting for admin review.
-                </p>
-              )}
-            </article>
-          );
-        })}
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`grid size-12 shrink-0 place-items-center rounded-full ${
+                        complete ? "bg-[#0b3a2c] text-[#31d67b]" : "bg-[#17171c] text-[#a1a1aa]"
+                      }`}
+                    >
+                      {complete ? <Check size={24} strokeWidth={4} /> : <span className="text-2xl font-black">!</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-[15px] font-black leading-tight text-white">{task.title}</h2>
+                      <p className="mt-1 text-[12px] text-[#a1a1aa]">+{task.reward} OBSD</p>
+                    </div>
+                    {!complete && task.url && (
+                      <a
+                        href={task.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                      >
+                        <ExternalLink size={16} />
+                        Open
+                      </a>
+                    )}
+                    {complete ? (
+                      <span className="rounded-full bg-[#0b3a2c] px-4 py-2 text-xs font-black text-[#31d67b]">
+                        Verified
+                      </span>
+                    ) : task.platform === "telegram" ? (
+                      <button
+                        type="button"
+                        onClick={() => verifyTelegramTask(task.id)}
+                        disabled={!sessionReady}
+                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                      >
+                        Verify
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => submitProof(task.id)}
+                        disabled={!sessionReady || pending}
+                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                      >
+                        {pending ? "Submitted" : "Submit"}
+                      </button>
+                    )}
+                  </div>
+                  {task.proofRequired && !complete && !pending && (
+                    <input
+                      value={proofs[task.id] ?? ""}
+                      onChange={(event) =>
+                        setProofs((current) => ({ ...current, [task.id]: event.target.value }))
+                      }
+                      placeholder="Paste proof image/link URL"
+                      className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
+                    />
+                  )}
+                  {pending && (
+                    <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
+                      Submitted. Waiting for admin review.
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <button
         type="button"
         onClick={goMining}
-        className="mt-9 h-16 w-full rounded-[16px] bg-[#d69a2d] text-[17px] font-black text-white"
+        className="mt-10 h-16 w-full rounded-[16px] bg-[#d69a2d] hover:bg-[#b07e20] text-[17px] font-black text-white transition duration-200"
       >
-        Complete Tasks to Unlock App
+        Go to Mining Node Dashboard
       </button>
     </div>
   );
 }
 
 function MiningScreen({
-  balance,
-  pendingBalance,
-  withdrawableBalance,
-  purchaseVerified,
+  user,
+  activeSession,
+  lastSessionStart,
   tokenUsdPrice,
+  onStartMining,
+  onClaimMining,
+  changeTab,
+  walletAddress,
+  setWalletAddress,
+  submitPurchaseVerification,
+  settings,
 }: {
-  balance: number;
-  pendingBalance: number;
-  withdrawableBalance: number;
-  purchaseVerified: boolean;
+  user: AppUser;
+  activeSession: any;
+  lastSessionStart: string | null;
   tokenUsdPrice: number;
+  onStartMining: () => Promise<void>;
+  onClaimMining: () => Promise<void>;
+  changeTab: (tab: any) => void;
+  walletAddress: string;
+  setWalletAddress: (val: string) => void;
+  submitPurchaseVerification: () => Promise<void>;
+  settings: AppSettings;
 }) {
-  const multiplier = purchaseVerified ? 3 : 1;
-  const velocity = 1.25 * multiplier;
-  const usdBalance = balance * tokenUsdPrice;
+  const [timeLeft, setTimeLeft] = useState<string | null>(null);
+  const [cooldownTimeLeft, setCooldownTimeLeft] = useState<string | null>(null);
+  const [accrued, setAccrued] = useState<number>(0);
+  const [progressPercent, setProgressPercent] = useState<number>(0);
+  const [isClaimable, setIsClaimable] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  useEffect(() => {
+    let interval: any = null;
+
+    const tick = () => {
+      // 1. Cooldown checking
+      if (user.purchaseVerified && lastSessionStart && !activeSession) {
+        const target = new Date(lastSessionStart).getTime() + 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const diff = target - now;
+        if (diff > 0) {
+          const hours = Math.floor(diff / (1000 * 60 * 60));
+          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+          const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+          setCooldownTimeLeft(
+            `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+          );
+        } else {
+          setCooldownTimeLeft(null);
+        }
+      } else {
+        setCooldownTimeLeft(null);
+      }
+
+      // 2. Active Session checking
+      if (activeSession) {
+        const start = new Date(activeSession.startedAt).getTime();
+        const end = new Date(activeSession.endsAt).getTime();
+        const now = Date.now();
+        const total = end - start;
+        const elapsed = now - start;
+        const remaining = end - now;
+
+        if (remaining <= 0) {
+          setTimeLeft(null);
+          setAccrued(activeSession.rewardTokens);
+          setProgressPercent(100);
+          setIsClaimable(true);
+        } else {
+          setIsClaimable(false);
+          const minutes = Math.floor(remaining / (1000 * 60));
+          const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
+          setTimeLeft(`${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`);
+          
+          const computedAccrued = Math.min((elapsed / total) * activeSession.rewardTokens, activeSession.rewardTokens);
+          setAccrued(Number(computedAccrued.toFixed(6)));
+          setProgressPercent((elapsed / total) * 100);
+        }
+      } else {
+        setTimeLeft(null);
+        setAccrued(0);
+        setProgressPercent(0);
+        setIsClaimable(false);
+      }
+    };
+
+    tick();
+    interval = setInterval(tick, 1000);
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeSession, lastSessionStart, user.purchaseVerified]);
+
+  const isMiningLocked = user.miningCyclesCompleted > 0 && !user.purchaseVerified;
+  const boostMultiplier = user.purchaseVerified ? 2 : 1;
+  const velocity = (boostMultiplier * 0.10) / (tokenUsdPrice || 0.001);
+  const usdAccrued = accrued * tokenUsdPrice;
+
+  const handleStart = async () => {
+    setIsSubmitting(true);
+    await onStartMining();
+    setIsSubmitting(false);
+  };
+
+  const handleClaim = async () => {
+    setIsSubmitting(true);
+    await onClaimMining();
+    setIsSubmitting(false);
+  };
 
   return (
-    <div className="pt-8">
+    <div className="pt-8 space-y-6">
       <section className="rounded-[16px] border border-[#23232a] bg-[#121216] p-5 shadow-[0_0_40px_rgba(255,138,0,0.08)]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="size-10 rounded-full border-2 border-[#d69a2d]" />
+            <div className="relative size-10 rounded-full border-2 border-[#d69a2d] bg-black grid place-items-center font-bold text-[#d69a2d]">
+              {user.purchaseVerified ? "⚡" : "N"}
+            </div>
             <div>
-              <h1 className="text-[15px] font-black">Obsidian Node #481</h1>
-              <p className="text-xs font-black text-[#31d67b]">NETWORK SYNCED</p>
+              <h1 className="text-[15px] font-black">Obsidian Genesis Node</h1>
+              <p className="text-xs font-black text-[#31d67b] uppercase tracking-wider">
+                {user.purchaseVerified ? "Verified Apex Node" : "Standard Validation Node"}
+              </p>
             </div>
           </div>
-          <span className="rounded-xl border border-[#23232a] px-5 py-3 text-sm font-black text-[#d69a2d]">
-            L3 APEX
+          <span className="rounded-xl border border-[#23232a] px-4 py-2 text-xs font-black text-[#d69a2d]">
+            L3 NODE
           </span>
         </div>
       </section>
 
-      <section className="mt-12 grid place-items-center">
-        <div className="relative grid size-[228px] place-items-center rounded-full bg-[conic-gradient(#ff8a00_0_62%,#353300_62%_82%,#070707_82%_100%)] p-3 shadow-[0_0_70px_rgba(255,138,0,0.10)]">
-          <div className="grid size-full place-items-center rounded-full border-2 border-[#ff8a00] bg-[#060606]">
-            <div className="text-center">
-              <p className="text-sm font-black text-[#a1a1aa]">ACCRUED ASSETS</p>
-              <p className="mt-4 text-[44px] font-black leading-none text-[#e8f4ff]">
-                {balance.toLocaleString()}
-              </p>
-              <p className="mt-2 text-sm font-black">OBSD</p>
-              <p className="mt-1 text-xs font-black text-[#a1a1aa]">
-                ${usdBalance.toFixed(2)} USD
-              </p>
-              <p className="mt-4 rounded-full bg-[#063326] px-4 py-2 text-xs font-black text-[#31d67b]">
-                ENGINE ACTIVE
+      {isMiningLocked ? (
+        <section className="mt-8 rounded-[24px] border border-[#ff8a00]/30 bg-[#0c0a05] p-6 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="mx-auto grid size-16 place-items-center rounded-full bg-[#ff8a00]/10 text-[#ff8a00] text-3xl">
+              🔒
+            </div>
+            <h2 className="text-xl font-black text-white">Ecosystem Verification Locked</h2>
+            <p className="text-xs text-gray-400 leading-relaxed px-2">
+              You completed your first mining cycle! To prevent sybil accounts and unlock infinite daily cycles and withdrawals, you must verify your OBSD token hold.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-[#121216] border border-[#23232a] text-center">
+            <div>
+              <p className="text-[10px] uppercase font-bold text-gray-500">Required Hold</p>
+              <p className="text-lg font-black text-[#ff8a00] mt-1">${settings.requiredPurchaseUsd.toFixed(2)} USD</p>
+              <p className="text-[9px] text-gray-400 mt-0.5">
+                (~{((settings.requiredPurchaseUsd) / (tokenUsdPrice || 0.001)).toFixed(2)} OBSD)
               </p>
             </div>
+            <div>
+              <p className="text-[10px] uppercase font-bold text-gray-500">Withdrawal Lock</p>
+              <p className="text-lg font-black text-[#ff8a00] mt-1">
+                {settings.withdrawalLockDays || 0} {settings.withdrawalLockDays === 1 ? "Day" : "Days"}
+              </p>
+              <p className="text-[9px] text-gray-400 mt-0.5">Security Hold Period</p>
+            </div>
           </div>
-        </div>
-      </section>
 
-      <p className="mt-8 text-center text-[15px] text-[#a1a1aa]">
-        Velocity: <span className="font-black text-white">+{velocity.toFixed(2)} OBSD/hr</span>
-      </p>
+          <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+            <div>
+              <p className="font-bold text-[#ff8a00]">Need OBSD tokens to unlock?</p>
+              <p className="text-[11px] text-gray-400 mt-1 leading-normal">
+                Swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
+              </p>
+            </div>
+            <a
+              href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center h-10 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+            >
+              Buy OBSD on QuickSwap
+            </a>
+          </div>
 
-      <InfoStrip label="Egress Window Closes In" value="04h 18m 32s" />
+          <div className="space-y-3">
+            <input
+              value={walletAddress}
+              onChange={(e) => setWalletAddress(e.target.value)}
+              placeholder="Enter Polygon Wallet Address (0x...)"
+              className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold text-white outline-none focus:border-[#ff8a00]"
+            />
+            <button
+              onClick={submitPurchaseVerification}
+              className="w-full h-12 bg-[#31d67b]/20 hover:bg-[#31d67b]/30 text-[#31d67b] border border-[#31d67b]/30 text-sm font-black rounded-xl transition duration-200"
+            >
+              Verify Hold (Automatic)
+            </button>
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="mt-8 grid place-items-center">
+            <div
+              className="relative grid size-[228px] place-items-center rounded-full p-3 shadow-[0_0_70px_rgba(255,138,0,0.10)] transition-all duration-300"
+              style={{
+                background: `conic-gradient(#ff8a00 0% ${progressPercent}%, #23232a ${progressPercent}% 100%)`,
+              }}
+            >
+              <div className="grid size-full place-items-center rounded-full border border-black bg-[#060606]">
+                <div className="text-center px-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[#a1a1aa]">
+                    {activeSession ? "Session Accrual" : "Ready to Sync"}
+                  </p>
+                  <p className="mt-2 text-[32px] font-black leading-none text-[#e8f4ff] font-mono truncate max-w-[190px]">
+                    {activeSession ? accrued.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 }) : "0.00"}
+                  </p>
+                  <p className="mt-1.5 text-xs font-black text-[#a1a1aa]">OBSD</p>
+                  {activeSession && (
+                    <p className="mt-1 text-[10px] font-black text-[#31d67b] font-mono">
+                      ~${usdAccrued.toFixed(4)} USD
+                    </p>
+                  )}
+                  <p
+                    className={`mt-4 mx-auto w-max rounded-full px-3 py-1 text-[10px] font-black ${
+                      activeSession
+                        ? isClaimable
+                          ? "bg-[#0b3a2c] text-[#31d67b]"
+                          : "bg-[#332306] text-[#ff8a00]"
+                        : "bg-[#16161a] text-gray-500"
+                    }`}
+                  >
+                    {activeSession
+                      ? isClaimable
+                        ? "SYNC COMPLETE"
+                        : "SYNCING NODE"
+                      : "NODE INACTIVE"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
 
-      <div className="mt-7 grid grid-cols-3 gap-3">
-        <MetricCard title="Pending" value={pendingBalance} suffix="OBSD" />
-        <MetricCard title="Ready" value={withdrawableBalance} suffix="OBSD" />
-        <MetricCard title="Boost" value={multiplier} suffix="x" />
-      </div>
+          <p className="mt-4 text-center text-sm text-[#a1a1aa] font-bold">
+            Mining Speed: <span className="text-white">+{velocity.toFixed(4)} OBSD/hr</span>
+          </p>
 
-      <button
-        type="button"
-        className="mt-10 h-16 w-full rounded-[16px] bg-[#d69a2d] text-[17px] font-black text-white"
-      >
-        Claim Accrued OBSD Tokens
-      </button>
+          {activeSession && !isClaimable && (
+            <InfoStrip label="Sync Session Ends In" value={timeLeft || "00:00"} />
+          )}
+
+          {cooldownTimeLeft && (
+            <InfoStrip label="Next Sync Available In" value={cooldownTimeLeft} />
+          )}
+
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <MetricCard title="Completed" value={user.miningCyclesCompleted} suffix="cycles" />
+            <MetricCard title="Boost" value={boostMultiplier} suffix="x" />
+            <MetricCard title="Price" value={`$${tokenUsdPrice.toFixed(4)}`} suffix="" />
+          </div>
+
+          {isClaimable ? (
+            <button
+              type="button"
+              onClick={handleClaim}
+              disabled={isSubmitting}
+              className="mt-8 h-16 w-full rounded-[16px] bg-[#31d67b] hover:bg-[#25ad61] text-[17px] font-black text-black transition duration-200"
+            >
+              {isSubmitting ? "Claiming..." : "Claim Accrued OBSD Tokens"}
+            </button>
+          ) : activeSession ? (
+            <button
+              type="button"
+              disabled
+              className="mt-8 h-16 w-full rounded-[16px] bg-[#d69a2d]/30 text-[17px] font-black text-white/50 cursor-not-allowed text-center"
+            >
+              Syncing OBSD... ({timeLeft})
+            </button>
+          ) : cooldownTimeLeft ? (
+            <button
+              type="button"
+              disabled
+              className="mt-8 h-16 w-full rounded-[16px] bg-gray-800 text-[17px] font-black text-gray-500 cursor-not-allowed text-center"
+            >
+              Cooldown Active
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleStart}
+              disabled={isSubmitting}
+              className="mt-8 h-16 w-full rounded-[16px] bg-[#d69a2d] hover:bg-[#b07e20] text-[17px] font-black text-white transition duration-200"
+            >
+              {isSubmitting ? "Synchronizing..." : "Start 1-Hour Mining Cycle"}
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -681,6 +1157,22 @@ function WalletScreen({
               : undefined
           }
         />
+        {locked && (
+          <div className="mt-4 p-4 rounded-[12px] bg-[#120c02] border border-[#ff8a00]/30 text-xs text-gray-300">
+            <p className="font-bold text-[#ff8a00] mb-1">Need OBSD tokens to unlock?</p>
+            <p className="mb-3 text-gray-400 font-medium">
+              You can swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
+            </p>
+            <a
+              href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center px-4 h-9 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+            >
+              Buy OBSD on QuickSwap
+            </a>
+          </div>
+        )}
       </section>
 
       <div className="mt-8 grid grid-cols-3 gap-3">
@@ -706,21 +1198,13 @@ function WalletScreen({
           className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
         />
         {locked && (
-          <>
-            <input
-              value={purchaseProofUrl}
-              onChange={(event) => setPurchaseProofUrl(event.target.value)}
-              placeholder="Purchase proof link or screenshot URL"
-              className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
-            />
-            <button
-              type="button"
-              onClick={submitPurchaseVerification}
-              className="h-12 w-full rounded-[12px] border border-[#31d67b] bg-[#062219] text-sm font-black text-[#31d67b]"
-            >
-              Submit Purchase Proof
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={submitPurchaseVerification}
+            className="h-12 w-full rounded-[12px] border border-[#31d67b] bg-[#062219] text-sm font-black text-[#31d67b]"
+          >
+            Verify Purchase (Automatic)
+          </button>
         )}
       </section>
 
@@ -912,7 +1396,7 @@ function MetricCard({
   highlight,
 }: {
   title: string;
-  value: number;
+  value: number | string;
   suffix: string;
   highlight?: boolean;
 }) {
@@ -920,7 +1404,7 @@ function MetricCard({
     <div className="rounded-[16px] border border-[#d69a2d] bg-[#0b0b0d] p-4">
       <p className="text-sm text-[#a1a1aa]">{title}</p>
       <p className={`mt-2 text-[24px] font-black ${highlight ? "text-[#31d67b]" : "text-white"}`}>
-        {value.toLocaleString()}
+        {typeof value === "number" ? value.toLocaleString() : value}
         {suffix && <span className="ml-1 text-xs">{suffix}</span>}
       </p>
     </div>

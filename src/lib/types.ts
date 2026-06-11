@@ -22,6 +22,8 @@ export type AppUser = {
   referredBy?: string | null;
   referralCount: number;
   unlockAt?: string | null;
+  miningCyclesCompleted: number;
+  cooldownBypassed: boolean;
 };
 
 export type TelegramInitUser = {
@@ -40,6 +42,8 @@ export type DbTask = {
   reward: number;
   proof_required: boolean;
   is_onboarding: boolean;
+  reward_usd?: number | null;
+  is_social_media: boolean;
 };
 
 export type Task = {
@@ -52,6 +56,8 @@ export type Task = {
   status: TaskStatus;
   proofRequired: boolean;
   isOnboarding: boolean;
+  rewardUsd?: number | null;
+  isSocialMedia: boolean;
 };
 
 export type AppSettings = {
@@ -60,6 +66,9 @@ export type AppSettings = {
   purchaseConditionEnabled: boolean;
   tokenUsdPrice: number;
   withdrawalLockDays: number;
+  tokenContractAddress: string;
+  quickswapLink: string;
+  ownerWallet: string;
 };
 
 export type ReviewSubmission = {

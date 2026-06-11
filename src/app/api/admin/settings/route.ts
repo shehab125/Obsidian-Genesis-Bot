@@ -8,6 +8,9 @@ const settingsSchema = z.object({
   purchaseConditionEnabled: z.boolean(),
   tokenUsdPrice: z.number().min(0),
   withdrawalLockDays: z.number().int().nonnegative(),
+  tokenContractAddress: z.string().optional().default(""),
+  quickswapLink: z.string().optional().default(""),
+  ownerWallet: z.string().optional().default(""),
 });
 
 export async function PATCH(request: Request) {

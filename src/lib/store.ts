@@ -1,7 +1,7 @@
 import { unstable_noStore as noStore } from "next/cache";
 import { appSettings as mockSettings } from "./mock-data";
 import { getSupabaseServerClient } from "./supabase";
-import { verifyTelegramInitData } from "./telegram";
+import { verifyTelegramInitData, sendTelegramMessage } from "./telegram";
 import type {
   AppSettings,
   AppUser,
@@ -32,6 +32,8 @@ const emptyUser: AppUser = {
   referredBy: null,
   referralCount: 0,
   unlockAt: null,
+  miningCyclesCompleted: 0,
+  cooldownBypassed: false,
 };
 
 type DbUser = {
@@ -49,6 +51,8 @@ type DbUser = {
   referred_by: string | null;
   referral_count: number;
   unlock_at: string | null;
+  mining_cycles_completed?: number;
+  cooldown_bypassed?: boolean;
 };
 
 type DbTask = {
@@ -60,6 +64,8 @@ type DbTask = {
   reward: number;
   proof_required: boolean;
   is_onboarding: boolean;
+  reward_usd?: number | null;
+  is_social_media: boolean;
 };
 
 type ReviewSubmissionRow = {
@@ -106,6 +112,9 @@ type DbSettings = {
   purchase_condition_enabled: boolean;
   token_usd_price?: number;
   withdrawal_lock_days?: number;
+  token_contract_address?: string;
+  quickswap_link?: string;
+  owner_wallet?: string;
 };
 
 export async function getDashboardData() {
@@ -144,15 +153,15 @@ export async function getMiniAppBootstrapData() {
     };
   }
 
-  const [{ data: tasks }, settings, leaderboard] = await Promise.all([
+  const settings = await getAppSettings();
+  const [{ data: tasks }, leaderboard] = await Promise.all([
     supabase.from("tasks").select("*").eq("status", "active").order("created_at"),
-    getAppSettings(),
     getLeaderboard(),
   ]);
 
   return {
     user: emptyUser,
-    tasks: mapTasks((tasks ?? []) as DbTask[], new Set(), new Set()),
+    tasks: mapTasks((tasks ?? []) as DbTask[], new Set(), new Set(), settings.tokenUsdPrice),
     settings,
     leaderboard,
   };
@@ -187,6 +196,8 @@ async function getAdminData() {
     };
   }
 
+  const settings = await getAppSettings();
+
   const [{ data: tasks }, { data: users }, { count: usersCount }] = await Promise.all([
     supabase.from("tasks").select("*").eq("status", "active").order("created_at"),
     supabase.from("app_users").select("*").order("created_at", { ascending: false }).limit(50),
@@ -198,12 +209,12 @@ async function getAdminData() {
   return {
     user: mappedUsers[0] ?? emptyUser,
     users: mappedUsers,
-    tasks: mapTasks((tasks ?? []) as DbTask[], new Set(), new Set()),
+    tasks: mapTasks((tasks ?? []) as DbTask[], new Set(), new Set(), settings.tokenUsdPrice),
     submissions: await getReviewSubmissions(),
     withdrawals: await getWithdrawals(),
     purchaseVerifications: await getPurchaseVerificationRequests(),
     leaderboard: await getLeaderboard(),
-    settings: await getAppSettings(),
+    settings,
     stats: {
       users: usersCount ?? 0,
     },
@@ -228,6 +239,8 @@ async function getDataForUser(user: AppUser) {
     };
   }
 
+  const settings = await getAppSettings();
+
   const [
     { data: tasks },
     { data: completions },
@@ -250,12 +263,13 @@ async function getDataForUser(user: AppUser) {
       (tasks ?? []) as DbTask[],
       new Set((completions ?? []).map((item) => item.task_id as string)),
       new Set((pendingSubmissions ?? []).map((item) => item.task_id as string)),
+      settings.tokenUsdPrice,
     ),
     submissions: await getReviewSubmissions(),
     withdrawals: await getWithdrawals(),
     purchaseVerifications: await getPurchaseVerificationRequests(),
     leaderboard: await getLeaderboard(),
-    settings: await getAppSettings(),
+    settings,
     stats: {
       users: usersCount ?? 0,
     },
@@ -489,6 +503,123 @@ export async function createWithdrawal(input: {
   };
 }
 
+async function getErc20Balance(tokenAddress: string, walletAddress: string, decimals = 18): Promise<number> {
+  const rpcUrls = [
+    "https://polygon-bor.publicnode.com",
+    "https://polygon.drpc.org",
+    "https://1rpc.io/matic"
+  ];
+  
+  const cleanWallet = walletAddress.toLowerCase().replace(/^0x/, "");
+  const paddedWallet = cleanWallet.padStart(64, "0");
+  const data = "0x70a08231" + paddedWallet;
+  
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [
+            {
+              to: tokenAddress,
+              data: data
+            },
+            "latest"
+          ],
+          id: 1
+        })
+      });
+      
+      if (!response.ok) continue;
+      const json = await response.json();
+      if (json.error) continue;
+      
+      const result = json.result;
+      if (result && result !== "0x") {
+        const rawBalance = BigInt(result);
+        const balance = Number(rawBalance) / Math.pow(10, decimals);
+        return balance;
+      }
+    } catch (err) {
+      console.error(`RPC error on ${rpcUrl}:`, err);
+    }
+  }
+  return 0;
+}
+
+export async function verifyUserPurchaseAutomatic(userId: string, walletAddress: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false, message: "قاعدة البيانات غير متصلة." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    return { ok: false, message: "المستخدم غير موجود." };
+  }
+
+  if (user.frozen) {
+    return { ok: false, message: "حسابك مجمد حالياً." };
+  }
+
+  if (user.purchaseVerified) {
+    return { ok: true, message: "حسابك مفعل بالفعل." };
+  }
+
+  const settings = await getAppSettings();
+  const contractAddress = settings.tokenContractAddress || "0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f";
+  
+  if (!contractAddress) {
+    return { ok: false, message: "عنوان عقد العملة غير متوفر في الإعدادات." };
+  }
+
+  // 1. Check duplicate wallet usage
+  const { data: duplicate } = await supabase
+    .from("purchase_verification_requests")
+    .select("user_id")
+    .eq("wallet_address", walletAddress)
+    .eq("status", "approved")
+    .maybeSingle();
+
+  if (duplicate && duplicate.user_id !== userId) {
+    return { ok: false, message: "عنوان هذه المحفظة مستخدم بالفعل لتفعيل حساب آخر." };
+  }
+
+  // 2. Fetch balance
+  const balance = await getErc20Balance(contractAddress, walletAddress);
+  const usdValue = balance * settings.tokenUsdPrice;
+
+  if (usdValue < settings.requiredPurchaseUsd) {
+    return {
+      ok: false,
+      message: `لم نجد رصيد كافٍ من العملة في محفظتك. رصيدك الحالي: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). القيمة المطلوبة لتفعيل الحساب هي $${settings.requiredPurchaseUsd.toFixed(2)} USD. يرجى الشراء من QuickSwap وإعادة المحاولة.`
+    };
+  }
+
+  // 3. Log approved purchase verification
+  await supabase.from("purchase_verification_requests").insert({
+    user_id: userId,
+    wallet_address: walletAddress,
+    proof_url: "Automatic Web3 Verification",
+    status: "approved",
+    reviewed_at: new Date().toISOString()
+  });
+
+  // 4. Verify purchase in users record
+  const verifyResult = await verifyUserPurchase(userId);
+  if (!verifyResult.ok) {
+    return verifyResult;
+  }
+
+  return {
+    ok: true,
+    message: `تهانينا! تم التحقق من محفظتك وتفعيل حسابك تلقائياً بنجاح! رصيدك: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). تم تفعيل مضاعف السرعة 2x وتفعيل السحب وبدء دورة تعدين جديدة.`,
+  };
+}
+
 export async function createPurchaseVerification(input: {
   userId: string;
   walletAddress: string;
@@ -639,6 +770,8 @@ export async function createTask(input: {
     return { ok: false, message: "Database is not connected." };
   }
 
+  const settings = await getAppSettings();
+
   const { data, error } = await supabase
     .from("tasks")
     .insert({
@@ -660,7 +793,7 @@ export async function createTask(input: {
   return {
     ok: true,
     message: "Task created.",
-    task: mapTasks([data as DbTask], new Set(), new Set())[0],
+    task: mapTasks([data as DbTask], new Set(), new Set(), settings.tokenUsdPrice)[0],
   };
 }
 
@@ -679,6 +812,9 @@ export async function updateAppSettings(input: AppSettings) {
       purchase_condition_enabled: input.purchaseConditionEnabled,
       token_usd_price: input.tokenUsdPrice,
       withdrawal_lock_days: input.withdrawalLockDays,
+      token_contract_address: input.tokenContractAddress,
+      quickswap_link: input.quickswapLink,
+      owner_wallet: input.ownerWallet,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },
@@ -751,6 +887,7 @@ export async function verifyUserPurchase(userId: string) {
       balance_pending: 0,
       balance_withdrawable: nextWithdrawable,
       unlock_at: unlockAt,
+      cooldown_bypassed: true,
     })
     .eq("id", userId);
 
@@ -896,11 +1033,143 @@ async function getUserById(userId: string) {
   return user ? mapUser(user as DbUser, count ?? 0) : null;
 }
 
-async function getAppSettings(): Promise<AppSettings> {
+let priceCache: { price: number; timestamp: number } | null = null;
+
+async function getOnChainTokenPrice(tokenAddress: string, defaultPrice: number): Promise<number> {
+  if (!tokenAddress) return defaultPrice;
+  const now = Date.now();
+  if (priceCache && (now - priceCache.timestamp < 60000)) {
+    return priceCache.price;
+  }
+
+  const rpcUrls = [
+    "https://polygon-bor.publicnode.com",
+    "https://polygon.drpc.org",
+    "https://1rpc.io/matic"
+  ];
+
+  const OBSD = tokenAddress.toLowerCase();
+  const WPOL = "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270";
+  const USDC = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174";
+  const QUICK_V2_FACTORY = "0x5757371414417b8c6caad45baef941abc7d3ab32";
+
+  async function ethCall(to: string, data: string): Promise<string | null> {
+    for (const rpcUrl of rpcUrls) {
+      try {
+        const response = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to, data }, "latest"],
+            id: 1
+          })
+        });
+        if (response.ok) {
+          const json = await response.json();
+          if (json.result && json.result !== "0x") {
+            return json.result;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    return null;
+  }
+
+  function padAddress(addr: string): string {
+    return addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  }
+
+  try {
+    // 1. Get Pair(OBSD, WPOL)
+    const pairObsdPolData = "0xe6a43905" + padAddress(OBSD) + padAddress(WPOL);
+    const obsdPolPairRes = await ethCall(QUICK_V2_FACTORY, pairObsdPolData);
+    if (!obsdPolPairRes) throw new Error("OBSD-WPOL pair call failed");
+    const obsdPolPair = "0x" + obsdPolPairRes.slice(-40);
+    if (obsdPolPair === "0x0000000000000000000000000000000000000000") {
+      throw new Error("OBSD-WPOL pair not found");
+    }
+
+    // 2. Get Reserves of Pair(OBSD, WPOL)
+    const obsdPolReservesRes = await ethCall(obsdPolPair, "0x0902f1ac");
+    if (!obsdPolReservesRes) throw new Error("OBSD-WPOL reserves call failed");
+    const r0_obsd_pol = BigInt("0x" + obsdPolReservesRes.slice(2, 66));
+    const r1_obsd_pol = BigInt("0x" + obsdPolReservesRes.slice(66, 130));
+
+    // Get token0 of Pair(OBSD, WPOL)
+    const obsdPolT0Res = await ethCall(obsdPolPair, "0x0dfe1681");
+    if (!obsdPolT0Res) throw new Error("OBSD-WPOL token0 call failed");
+    const obsdPolT0 = "0x" + obsdPolT0Res.slice(-40);
+
+    let obsdReserve, polReserve;
+    if (obsdPolT0.toLowerCase() === OBSD) {
+      obsdReserve = r0_obsd_pol;
+      polReserve = r1_obsd_pol;
+    } else {
+      obsdReserve = r1_obsd_pol;
+      polReserve = r0_obsd_pol;
+    }
+
+    if (obsdReserve === BigInt(0)) throw new Error("OBSD reserve is zero");
+    const wpolPerObsd = Number(polReserve) / Number(obsdReserve);
+
+    // 3. Get Pair(WPOL, USDC)
+    const pairPolUsdcData = "0xe6a43905" + padAddress(WPOL) + padAddress(USDC);
+    const polUsdcPairRes = await ethCall(QUICK_V2_FACTORY, pairPolUsdcData);
+    if (!polUsdcPairRes) throw new Error("WPOL-USDC pair call failed");
+    const polUsdcPair = "0x" + polUsdcPairRes.slice(-40);
+    if (polUsdcPair === "0x0000000000000000000000000000000000000000") {
+      throw new Error("WPOL-USDC pair not found");
+    }
+
+    // 4. Get Reserves of Pair(WPOL, USDC)
+    const polUsdcReservesRes = await ethCall(polUsdcPair, "0x0902f1ac");
+    if (!polUsdcReservesRes) throw new Error("WPOL-USDC reserves call failed");
+    const r0_pol_usdc = BigInt("0x" + polUsdcReservesRes.slice(2, 66));
+    const r1_pol_usdc = BigInt("0x" + polUsdcReservesRes.slice(66, 130));
+
+    // Get token0 of Pair(WPOL, USDC)
+    const polUsdcT0Res = await ethCall(polUsdcPair, "0x0dfe1681");
+    if (!polUsdcT0Res) throw new Error("WPOL-USDC token0 call failed");
+    const polUsdcT0 = "0x" + polUsdcT0Res.slice(-40);
+
+    let wpolReserveForUsdc, usdcReserve;
+    if (polUsdcT0.toLowerCase() === WPOL) {
+      wpolReserveForUsdc = r0_pol_usdc;
+      usdcReserve = r1_pol_usdc;
+    } else {
+      wpolReserveForUsdc = r1_pol_usdc;
+      usdcReserve = r0_pol_usdc;
+    }
+
+    if (wpolReserveForUsdc === BigInt(0)) throw new Error("WPOL reserve for USDC is zero");
+    const wpolAmount = Number(wpolReserveForUsdc) / 1e18;
+    const usdcAmount = Number(usdcReserve) / 1e6;
+    const usdcPerWpol = usdcAmount / wpolAmount;
+
+    const price = wpolPerObsd * usdcPerWpol;
+    if (price > 0) {
+      priceCache = { price, timestamp: now };
+      const supabase = getSupabaseServerClient();
+      if (supabase) {
+        supabase.from("app_settings").update({ token_usd_price: price }).eq("id", true).then();
+      }
+      return price;
+    }
+  } catch (err) {
+    console.error("On-chain price fetch failed, falling back to db:", err);
+  }
+  return defaultPrice;
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
   const supabase = getSupabaseServerClient();
 
   if (!supabase) {
-    return { ...mockSettings, withdrawalLockDays: 0 };
+    return { ...mockSettings, withdrawalLockDays: 0, tokenContractAddress: "", quickswapLink: "", ownerWallet: "" };
   }
 
   const { data } = await supabase
@@ -910,16 +1179,24 @@ async function getAppSettings(): Promise<AppSettings> {
     .maybeSingle();
 
   if (!data) {
-    return { ...mockSettings, withdrawalLockDays: 0 };
+    return { ...mockSettings, withdrawalLockDays: 0, tokenContractAddress: "", quickswapLink: "", ownerWallet: "" };
   }
 
   const settings = data as DbSettings;
+  const dbPrice = Number(settings.token_usd_price ?? mockSettings.tokenUsdPrice);
+  const contractAddress = settings.token_contract_address ?? "";
+  
+  const tokenUsdPrice = await getOnChainTokenPrice(contractAddress, dbPrice);
+
   return {
     minimumWithdrawalPoints: settings.minimum_withdrawal_points,
     requiredPurchaseUsd: Number(settings.required_purchase_usd),
     purchaseConditionEnabled: settings.purchase_condition_enabled,
-    tokenUsdPrice: Number(settings.token_usd_price ?? mockSettings.tokenUsdPrice),
+    tokenUsdPrice,
     withdrawalLockDays: settings.withdrawal_lock_days ?? 0,
+    tokenContractAddress: contractAddress,
+    quickswapLink: settings.quickswap_link ?? "",
+    ownerWallet: settings.owner_wallet ?? "",
   };
 }
 
@@ -1036,6 +1313,8 @@ function mapUser(user: DbUser, completedTasks: number): AppUser {
     referredBy: user.referred_by,
     referralCount: user.referral_count ?? 0,
     unlockAt: user.unlock_at,
+    miningCyclesCompleted: user.mining_cycles_completed ?? 0,
+    cooldownBypassed: user.cooldown_bypassed ?? false,
   };
 }
 
@@ -1071,6 +1350,201 @@ async function awardRewardToUser(userId: string, amount: number) {
     .single();
 
   return data ? mapUser(data as DbUser, user.completedTasks + 1) : null;
+}
+
+export async function getUserActiveMiningSession(userId: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("mining_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("claimed", false)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    userId: data.user_id,
+    startedAt: data.started_at,
+    endsAt: data.ends_at,
+    claimed: data.claimed,
+    rewardUsd: Number(data.reward_usd),
+    rewardTokens: Number(data.reward_tokens),
+  };
+}
+
+export async function startMiningSession(userId: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false, message: "قاعدة البيانات غير متصلة." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    return { ok: false, message: "المستخدم غير موجود." };
+  }
+
+  if (user.frozen) {
+    return { ok: false, message: "تم تجميد حسابك، لا يمكنك التعدين." };
+  }
+
+  if (!user.onboardingCompleted) {
+    return { ok: false, message: "يجب إكمال المهام الإلزامية أولاً." };
+  }
+
+  // Check if there is already an active session (running or unclaimed)
+  const activeSession = await getUserActiveMiningSession(userId);
+  if (activeSession) {
+    return { ok: false, message: "لديك دورة تعدين نشطة بالفعل أو بانتظار المطالبة." };
+  }
+
+  // Check 24-hour limit on starting sessions unless cooldown_bypassed is true
+  if (!user.cooldownBypassed) {
+    const { data: lastSession } = await supabase
+      .from("mining_sessions")
+      .select("started_at")
+      .eq("user_id", userId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastSession) {
+      const lastStart = new Date(lastSession.started_at).getTime();
+      const diffHours = (Date.now() - lastStart) / (1000 * 60 * 60);
+      if (diffHours < 24) {
+        const remainingMs = (24 * 60 * 60 * 1000) - (Date.now() - lastStart);
+        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        return {
+          ok: false,
+          message: `يمكنك بدء دورة تعدين واحدة كل 24 ساعة. يرجى الانتظار ${hours} ساعة و ${minutes} دقيقة.`,
+          cooldownRemainingMs: remainingMs
+        };
+      }
+    }
+  }
+
+  // Fetch token price to calculate exact OBSD amount
+  const settings = await getAppSettings();
+  const price = settings.tokenUsdPrice || 0.001;
+
+  // Reward calculation:
+  // If purchaseVerified is true -> multiplier is 2x -> reward is $0.20
+  // If purchaseVerified is false -> reward is $0.10
+  const rewardUsd = user.purchaseVerified ? 0.20 : 0.10;
+  const rewardTokens = Number((rewardUsd / price).toFixed(6));
+
+  const durationMs = 1 * 60 * 60 * 1000; // 1 hour
+  const endsAt = new Date(Date.now() + durationMs).toISOString();
+
+  const { data: newSession, error: insertError } = await supabase
+    .from("mining_sessions")
+    .insert({
+      user_id: userId,
+      ends_at: endsAt,
+      reward_usd: rewardUsd,
+      reward_tokens: rewardTokens,
+    })
+    .select("*")
+    .single();
+
+  if (insertError || !newSession) {
+    return { ok: false, message: "فشل بدء دورة التعدين." };
+  }
+
+  // If cooldown was bypassed, reset it to false
+  if (user.cooldownBypassed) {
+    await supabase
+      .from("app_users")
+      .update({ cooldown_bypassed: false })
+      .eq("id", userId);
+  }
+
+  return {
+    ok: true,
+    message: "تم بدء دورة التعدين بنجاح لمدة ساعة.",
+    session: {
+      id: newSession.id,
+      userId: newSession.user_id,
+      startedAt: newSession.started_at,
+      endsAt: newSession.ends_at,
+      claimed: newSession.claimed,
+      rewardUsd: Number(newSession.reward_usd),
+      rewardTokens: Number(newSession.reward_tokens),
+    }
+  };
+}
+
+export async function claimMiningSession(userId: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false, message: "قاعدة البيانات غير متصلة." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    return { ok: false, message: "المستخدم غير موجود." };
+  }
+
+  if (user.frozen) {
+    return { ok: false, message: "تم تجميد حسابك، لا يمكنك المطالبة." };
+  }
+
+  const { data: session, error } = await supabase
+    .from("mining_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("claimed", false)
+    .maybeSingle();
+
+  if (error || !session) {
+    return { ok: false, message: "لا توجد دورة تعدين نشطة للمطالبة بها." };
+  }
+
+  const now = new Date().getTime();
+  const ends = new Date(session.ends_at).getTime();
+  if (now < ends) {
+    return { ok: false, message: "دورة التعدين لم تنتهِ بعد." };
+  }
+
+  // Claim it
+  const { error: claimError } = await supabase
+    .from("mining_sessions")
+    .update({
+      claimed: true,
+      claimed_at: new Date().toISOString(),
+    })
+    .eq("id", session.id);
+
+  if (claimError) {
+    return { ok: false, message: "فشل تسجيل المطالبة بالنقاط." };
+  }
+
+  // Award the OBSD reward to the user
+  const amount = Number(session.reward_tokens);
+  await awardRewardToUser(userId, amount);
+
+  // Increment completed mining cycles
+  const nextCycles = (user.miningCyclesCompleted || 0) + 1;
+  const { data: updatedUser } = await supabase
+    .from("app_users")
+    .update({
+      mining_cycles_completed: nextCycles,
+    })
+    .eq("id", userId)
+    .select("*")
+    .maybeSingle();
+
+  return {
+    ok: true,
+    message: "تمت المطالبة بنقاط التعدين بنجاح.",
+    balance: updatedUser ? updatedUser.balance : user.balance,
+    pendingBalance: updatedUser ? updatedUser.balance_pending : user.pendingBalance,
+    withdrawableBalance: updatedUser ? updatedUser.balance_withdrawable : user.withdrawableBalance,
+    miningCyclesCompleted: nextCycles,
+  };
 }
 
 export async function awardReferralBonus(referrerId: string, referredUserId: string, taskId: string | null, amount: number) {
@@ -1268,22 +1742,30 @@ function extractTelegramChatId(url: string): string | null {
   return null;
 }
 
-function mapTasks(tasks: DbTask[], completedIds: Set<string>, pendingIds: Set<string>): Task[] {
-  return tasks.map((task) => ({
-    id: task.id,
-    title: task.title,
-    description: task.description,
-    platform: task.platform,
-    reward: task.reward,
-    url: task.target_url,
-    status: completedIds.has(task.id)
-      ? "completed"
-      : pendingIds.has(task.id)
-        ? "pending_review"
-        : "available",
-    proofRequired: task.proof_required,
-    isOnboarding: task.is_onboarding ?? false,
-  }));
+function mapTasks(tasks: DbTask[], completedIds: Set<string>, pendingIds: Set<string>, tokenUsdPrice: number): Task[] {
+  return tasks.map((task) => {
+    let reward = task.reward;
+    if (task.reward_usd) {
+      reward = Math.round(Number(task.reward_usd) / (tokenUsdPrice || 0.001));
+    }
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      platform: task.platform,
+      reward,
+      url: task.target_url,
+      status: completedIds.has(task.id)
+        ? "completed"
+        : pendingIds.has(task.id)
+          ? "pending_review"
+          : "available",
+      proofRequired: task.proof_required,
+      isOnboarding: task.is_onboarding ?? false,
+      rewardUsd: task.reward_usd ? Number(task.reward_usd) : null,
+      isSocialMedia: task.is_social_media ?? false,
+    };
+  });
 }
 
 function getJoinedReward(submission: SubmissionWithReward) {
@@ -1376,5 +1858,51 @@ export async function runMembershipAntiCheatCheck() {
     ok: true,
     message: `Membership check completed. Frozen ${frozenUsers.length} users.`,
     frozenList: frozenUsers,
+  };
+}
+
+export async function runMiningNotificationsCheck() {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false, message: "Database is not connected." };
+  }
+
+  const botUsername = process.env.TELEGRAM_BOT_USERNAME || "rewards_tasks_demo_bot";
+
+  const { data: sessions, error } = await supabase
+    .from("mining_sessions")
+    .select("*, app_users(telegram_id, display_name)")
+    .eq("claimed", false)
+    .eq("notified", false)
+    .lte("ends_at", new Date().toISOString());
+
+  if (error) {
+    console.error("Failed to query ended mining sessions:", error);
+    return { ok: false, message: "Failed to query sessions." };
+  }
+
+  let notifiedCount = 0;
+
+  for (const session of (sessions ?? [])) {
+    const user = session.app_users as unknown as { telegram_id: string; display_name: string } | null;
+    if (!user || !user.telegram_id) continue;
+
+    const messageText = `⚠️ <b>انتهت دورة التعدين الخاصة بك!</b>\n\nلقد جمعت ما يعادل 0.1$ من رموز OBSD.\n\nللمطالبة بالرموز والبدء في دورة جديدة، يرجى إكمال مهام السوشيال ميديا وتفعيل حسابك بالشراء.\n\n<a href="https://t.me/${botUsername}">افتح التطبيق الآن للمتابعة</a>`;
+
+    const ok = await sendTelegramMessage(user.telegram_id, messageText);
+    if (ok) {
+      await supabase
+        .from("mining_sessions")
+        .update({ notified: true })
+        .eq("id", session.id);
+      notifiedCount++;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  return {
+    ok: true,
+    message: `Mining check completed. Notified ${notifiedCount} users.`,
   };
 }

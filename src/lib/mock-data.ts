@@ -22,6 +22,8 @@ export const demoUser: AppUser = {
   referredBy: null,
   referralCount: 2,
   unlockAt: null,
+  miningCyclesCompleted: 3,
+  cooldownBypassed: false,
 };
 
 export const appSettings = {
@@ -30,6 +32,9 @@ export const appSettings = {
   purchaseConditionEnabled: true,
   tokenUsdPrice: 0.001,
   withdrawalLockDays: 0,
+  tokenContractAddress: "0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f",
+  quickswapLink: "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F",
+  ownerWallet: "0x7167C08FD45021c68993057d73f3b35944682635",
 };
 
 export const tasks: Task[] = [
@@ -43,6 +48,8 @@ export const tasks: Task[] = [
     status: "available",
     proofRequired: false,
     isOnboarding: false,
+    isSocialMedia: false,
+    rewardUsd: null,
   },
   {
     id: "task_tg_group",
@@ -54,6 +61,8 @@ export const tasks: Task[] = [
     status: "completed",
     proofRequired: false,
     isOnboarding: false,
+    isSocialMedia: false,
+    rewardUsd: null,
   },
   {
     id: "task_x_repost",
@@ -65,6 +74,8 @@ export const tasks: Task[] = [
     status: "pending_review",
     proofRequired: true,
     isOnboarding: false,
+    isSocialMedia: false,
+    rewardUsd: null,
   },
   {
     id: "task_x_like",
@@ -76,6 +87,8 @@ export const tasks: Task[] = [
     status: "available",
     proofRequired: true,
     isOnboarding: false,
+    isSocialMedia: false,
+    rewardUsd: null,
   },
 ];
 
