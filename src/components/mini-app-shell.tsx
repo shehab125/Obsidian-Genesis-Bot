@@ -53,7 +53,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
   const [pendingBalance, setPendingBalance] = useState(user.pendingBalance);
   const [withdrawableBalance, setWithdrawableBalance] = useState(user.withdrawableBalance);
   const [message, setMessage] = useState("Open this app from Telegram to load your real account.");
-  const [proofs, setProofs] = useState<Record<string, string>>({});
+  const [claimTimers, setClaimTimers] = useState<Record<string, number>>({});
   const [withdrawAmount, setWithdrawAmount] = useState(String(settings.minimumWithdrawalPoints));
   const [walletAddress, setWalletAddress] = useState("");
   const [purchaseProofUrl, setPurchaseProofUrl] = useState("");
@@ -273,34 +273,53 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
     scrollToTop();
   }
 
-  async function submitProof(taskId: string) {
+  const startSocialTimer = (taskId: string) => {
+    if (claimTimers[taskId] !== undefined) return;
+    setClaimTimers((prev) => ({ ...prev, [taskId]: 15 }));
+
+    const interval = setInterval(() => {
+      setClaimTimers((prev) => {
+        const currentVal = prev[taskId];
+        if (currentVal <= 1) {
+          clearInterval(interval);
+          return { ...prev, [taskId]: 0 };
+        }
+        return { ...prev, [taskId]: currentVal - 1 };
+      });
+    }, 1000);
+  };
+
+  async function claimSocialTask(taskId: string) {
     if (!sessionReady || !currentUser.id) {
       setMessage("Open from Telegram first.");
       return;
     }
-    if (!proofs[taskId]?.trim()) {
-      setMessage("Paste the proof image/link URL first.");
-      return;
-    }
-    const response = await fetch("/api/submissions", {
+    const response = await fetch("/api/tasks/social/claim", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: currentUser.id,
-        taskId,
-        proofUrl: proofs[taskId] ?? "",
-        note: "Proof submitted from mini app.",
-      }),
+      body: JSON.stringify({ userId: currentUser.id, taskId }),
     });
     const payload = await response.json();
     setMessage(payload.message);
-    if (payload.ok && payload.taskId) {
-      setTaskRows((rows) =>
-        rows.map((task) =>
-          task.id === payload.taskId ? { ...task, status: "pending_review" } : task,
-        ),
-      );
-      setProofs((current) => ({ ...current, [taskId]: "" }));
+    if (payload.balance !== undefined) setBalance(payload.balance);
+    if (payload.pendingBalance !== undefined) setPendingBalance(payload.pendingBalance);
+    if (payload.withdrawableBalance !== undefined) {
+      setWithdrawableBalance(payload.withdrawableBalance);
+    }
+    if (payload.ok) {
+      setTaskRows((rows) => {
+        const nextRows = rows.map((task) => (task.id === taskId ? { ...task, status: "completed" as const } : task));
+        const allOnboardingDone = nextRows.filter(t => t.isOnboarding).every(t => t.status === "completed");
+        setCurrentUser((current) => ({
+          ...current,
+          balance: payload.balance ?? current.balance,
+          pendingBalance: payload.pendingBalance ?? current.pendingBalance,
+          withdrawableBalance: payload.withdrawableBalance ?? current.withdrawableBalance,
+          completedTasks: current.completedTasks + 1,
+          onboardingCompleted: allOnboardingDone || current.onboardingCompleted,
+        }));
+        return nextRows;
+      });
     }
     scrollToTop();
   }
@@ -402,11 +421,11 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
             <OnboardingScreen
               tasks={taskRows}
               message={message}
-              proofs={proofs}
-              setProofs={setProofs}
               verifyTelegramTask={verifyTelegramTask}
               verifyReferralTask={verifyReferralTask}
-              submitProof={submitProof}
+              claimSocialTask={claimSocialTask}
+              claimTimers={claimTimers}
+              startSocialTimer={startSocialTimer}
               sessionReady={sessionReady}
               referralCount={currentUser.referralCount}
               referralLink={referralLink}
@@ -426,10 +445,10 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               tasks={taskRows}
               progress={progress}
               message={message}
-              proofs={proofs}
-              setProofs={setProofs}
               verifyTelegramTask={verifyTelegramTask}
-              submitProof={submitProof}
+              claimSocialTask={claimSocialTask}
+              claimTimers={claimTimers}
+              startSocialTimer={startSocialTimer}
               goMining={() => changeTab("mining")}
               sessionReady={sessionReady}
               miningCyclesCompleted={currentUser.miningCyclesCompleted}
@@ -481,15 +500,14 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
 }
 
 
-
 function HomeScreen({
   tasks,
   progress,
   message,
-  proofs,
-  setProofs,
   verifyTelegramTask,
-  submitProof,
+  claimSocialTask,
+  claimTimers,
+  startSocialTimer,
   goMining,
   sessionReady,
   miningCyclesCompleted,
@@ -499,10 +517,10 @@ function HomeScreen({
   tasks: Task[];
   progress: number;
   message: string;
-  proofs: Record<string, string>;
-  setProofs: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   verifyTelegramTask: (taskId: string) => Promise<void>;
-  submitProof: (taskId: string) => Promise<void>;
+  claimSocialTask: (taskId: string) => Promise<void>;
+  claimTimers: Record<string, number>;
+  startSocialTimer: (taskId: string) => void;
   goMining: () => void;
   sessionReady: boolean;
   miningCyclesCompleted: number;
@@ -551,43 +569,39 @@ function HomeScreen({
           </p>
           <button
             onClick={() => changeTab("wallet")}
-            className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d67300] text-xs font-black text-white rounded-xl transition duration-200"
+            className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d87500] text-xs font-black text-white rounded-xl transition duration-200 animate-pulse"
           >
-            Go to Wallet Verification
+            Go Verify Purchase
           </button>
         </section>
       )}
 
-      {message && <p className="mt-4 text-center text-xs font-bold text-[#ff8a00]">{message}</p>}
+      {message && <p className="mt-6 text-center text-xs font-bold text-[#ff8a00]">{message}</p>}
 
-      <div className="mt-8 space-y-4">
-        {/* Render Social Tasks first */}
+      <div className="mt-8 space-y-6">
+        {/* Social Media Tasks */}
         {socialTasks.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-xs font-black text-[#ff8a00] uppercase tracking-wider">Social Tasks</h3>
+            <h3 className="text-xs font-black text-[#a1a1aa] uppercase tracking-wider">Social Tasks</h3>
             {socialTasks.map((task) => {
               const complete = task.status === "completed";
-              const pending = task.status === "pending_review";
               const locked = isMiningLocked;
+              const timerVal = claimTimers[task.id];
 
               return (
                 <article
                   key={task.id}
-                  className={`rounded-[16px] border p-4 transition-all duration-200 ${
-                    locked
-                      ? "border-[#23232a] bg-[#0c0c0e] opacity-40"
-                      : complete
-                        ? "border-[#10b981] bg-[#121216]"
-                        : "border-[#ff8a00] bg-[#0b0b0d]"
+                  className={`rounded-[16px] border p-4 ${
+                    complete ? "border-[#10b981] bg-[#121216]" : "border-[#23232a] bg-[#0b0b0d]"
                   }`}
                 >
                   <div className="flex items-center gap-4">
                     <div
                       className={`grid size-12 shrink-0 place-items-center rounded-full ${
-                        locked
-                          ? "bg-gray-850 text-gray-600"
-                          : complete
-                            ? "bg-[#0b3a2c] text-[#31d67b]"
+                        complete
+                          ? "bg-[#0b3a2c] text-[#31d67b]"
+                          : locked
+                            ? "bg-[#1c1c24] text-gray-600"
                             : "bg-[#3a2b0b] text-[#ff8a00]"
                       }`}
                     >
@@ -599,18 +613,7 @@ function HomeScreen({
                         +{task.reward} OBSD (~$0.10)
                       </p>
                     </div>
-                    {!locked && !complete && task.url && (
-                      <a
-                        href={task.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
-                        title="Open task"
-                      >
-                        <ExternalLink size={16} />
-                        Open
-                      </a>
-                    )}
+
                     {locked ? (
                       <span className="text-xs font-black text-gray-500">Locked</span>
                     ) : complete ? (
@@ -618,40 +621,63 @@ function HomeScreen({
                         Verified
                       </span>
                     ) : task.platform === "telegram" ? (
-                      <button
-                        type="button"
-                        onClick={() => verifyTelegramTask(task.id)}
-                        disabled={!sessionReady}
-                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
-                      >
-                        Verify
-                      </button>
+                      <div className="flex gap-2 items-center">
+                        {task.url && (
+                          <a
+                            href={task.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                          >
+                            <ExternalLink size={16} />
+                            Open
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => verifyTelegramTask(task.id)}
+                          disabled={!sessionReady}
+                          className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                        >
+                          Verify
+                        </button>
+                      </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => submitProof(task.id)}
-                        disabled={!sessionReady || pending}
-                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
-                      >
-                        {pending ? "Submitted" : "Submit"}
-                      </button>
+                      <div className="flex gap-2 items-center">
+                        {timerVal === undefined && task.url && (
+                          <a
+                            href={task.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => startSocialTimer(task.id)}
+                            className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                          >
+                            <ExternalLink size={16} />
+                            Open
+                          </a>
+                        )}
+                        {timerVal !== undefined && timerVal > 0 && (
+                          <button
+                            type="button"
+                            disabled
+                            className="rounded-lg bg-[#17171c] px-3 py-2 text-xs font-black text-gray-500 cursor-not-allowed"
+                          >
+                            Wait {timerVal}s...
+                          </button>
+                        )}
+                        {timerVal === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => claimSocialTask(task.id)}
+                            disabled={!sessionReady}
+                            className="rounded-lg bg-[#d69a2d] hover:bg-[#b07e20] px-4 py-2 text-xs font-black text-black transition duration-200"
+                          >
+                            Claim
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {!locked && task.proofRequired && !complete && !pending && (
-                    <input
-                      value={proofs[task.id] ?? ""}
-                      onChange={(event) =>
-                        setProofs((current) => ({ ...current, [task.id]: event.target.value }))
-                      }
-                      placeholder="Paste proof image/link URL"
-                      className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
-                    />
-                  )}
-                  {!locked && pending && (
-                    <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
-                      Submitted. Waiting for admin review.
-                    </p>
-                  )}
                 </article>
               );
             })}
@@ -664,7 +690,7 @@ function HomeScreen({
             <h3 className="text-xs font-black text-[#a1a1aa] uppercase tracking-wider">Other Tasks</h3>
             {otherTasks.map((task) => {
               const complete = task.status === "completed";
-              const pending = task.status === "pending_review";
+              const timerVal = claimTimers[task.id];
               return (
                 <article
                   key={task.id}
@@ -684,56 +710,69 @@ function HomeScreen({
                       <h2 className="text-[15px] font-black leading-tight text-white">{task.title}</h2>
                       <p className="mt-1 text-[12px] text-[#a1a1aa]">+{task.reward} OBSD</p>
                     </div>
-                    {!complete && task.url && (
-                      <a
-                        href={task.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
-                      >
-                        <ExternalLink size={16} />
-                        Open
-                      </a>
-                    )}
+
                     {complete ? (
                       <span className="rounded-full bg-[#0b3a2c] px-4 py-2 text-xs font-black text-[#31d67b]">
                         Verified
                       </span>
                     ) : task.platform === "telegram" ? (
-                      <button
-                        type="button"
-                        onClick={() => verifyTelegramTask(task.id)}
-                        disabled={!sessionReady}
-                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
-                      >
-                        Verify
-                      </button>
+                      <div className="flex gap-2 items-center">
+                        {task.url && (
+                          <a
+                            href={task.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                          >
+                            <ExternalLink size={16} />
+                            Open
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => verifyTelegramTask(task.id)}
+                          disabled={!sessionReady}
+                          className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                        >
+                          Verify
+                        </button>
+                      </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => submitProof(task.id)}
-                        disabled={!sessionReady || pending}
-                        className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
-                      >
-                        {pending ? "Submitted" : "Submit"}
-                      </button>
+                      <div className="flex gap-2 items-center">
+                        {timerVal === undefined && task.url && (
+                          <a
+                            href={task.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => startSocialTimer(task.id)}
+                            className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                          >
+                            <ExternalLink size={16} />
+                            Open
+                          </a>
+                        )}
+                        {timerVal !== undefined && timerVal > 0 && (
+                          <button
+                            type="button"
+                            disabled
+                            className="rounded-lg bg-[#17171c] px-3 py-2 text-xs font-black text-gray-500 cursor-not-allowed"
+                          >
+                            Wait {timerVal}s...
+                          </button>
+                        )}
+                        {timerVal === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => claimSocialTask(task.id)}
+                            disabled={!sessionReady}
+                            className="rounded-lg bg-[#d69a2d] hover:bg-[#b07e20] px-4 py-2 text-xs font-black text-black transition duration-200"
+                          >
+                            Claim
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {task.proofRequired && !complete && !pending && (
-                    <input
-                      value={proofs[task.id] ?? ""}
-                      onChange={(event) =>
-                        setProofs((current) => ({ ...current, [task.id]: event.target.value }))
-                      }
-                      placeholder="Paste proof image/link URL"
-                      className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
-                    />
-                  )}
-                  {pending && (
-                    <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
-                      Submitted. Waiting for admin review.
-                    </p>
-                  )}
                 </article>
               );
             })}
@@ -1463,22 +1502,22 @@ function RankRow({ rank, name, score }: { rank: number; name: string; score: str
 function OnboardingScreen({
   tasks,
   message,
-  proofs,
-  setProofs,
   verifyTelegramTask,
   verifyReferralTask,
-  submitProof,
+  claimSocialTask,
+  claimTimers,
+  startSocialTimer,
   sessionReady,
   referralCount,
   referralLink,
 }: {
   tasks: Task[];
   message: string;
-  proofs: Record<string, string>;
-  setProofs: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   verifyTelegramTask: (taskId: string) => Promise<void>;
   verifyReferralTask: (taskId: string) => Promise<void>;
-  submitProof: (taskId: string) => Promise<void>;
+  claimSocialTask: (taskId: string) => Promise<void>;
+  claimTimers: Record<string, number>;
+  startSocialTimer: (taskId: string) => void;
   sessionReady: boolean;
   referralCount: number;
   referralLink: string;
@@ -1501,8 +1540,9 @@ function OnboardingScreen({
       <div className="space-y-4">
         {onboardingTasks.map((task) => {
           const complete = task.status === "completed";
-          const pending = task.status === "pending_review";
           const isReferral = task.platform === "referral";
+          const isTelegram = task.platform === "telegram";
+          const timerVal = claimTimers[task.id];
 
           return (
             <article
@@ -1530,48 +1570,76 @@ function OnboardingScreen({
                     </p>
                   )}
                 </div>
-                {!isReferral && task.url && (
-                  <a
-                    href={task.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
-                  >
-                    <ExternalLink size={16} />
-                    Open
-                  </a>
-                )}
+
                 {complete ? (
                   <span className="rounded-full bg-[#0b3a2c] px-4 py-2 text-xs font-black text-[#31d67b]">
                     Done
                   </span>
-                ) : task.platform === "telegram" ? (
-                  <button
-                    type="button"
-                    onClick={() => verifyTelegramTask(task.id)}
-                    disabled={!sessionReady}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black"
-                  >
-                    Verify
-                  </button>
+                ) : isTelegram ? (
+                  <div className="flex gap-2 items-center">
+                    {task.url && (
+                      <a
+                        href={task.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                      >
+                        <ExternalLink size={16} />
+                        Open
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => verifyTelegramTask(task.id)}
+                      disabled={!sessionReady}
+                      className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
+                    >
+                      Verify
+                    </button>
+                  </div>
                 ) : isReferral ? (
                   <button
                     type="button"
                     onClick={() => verifyReferralTask(task.id)}
                     disabled={!sessionReady}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black"
+                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
                   >
                     Verify
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => submitProof(task.id)}
-                    disabled={!sessionReady || pending}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black"
-                  >
-                    {pending ? "Submitted" : "Submit"}
-                  </button>
+                  <div className="flex gap-2 items-center">
+                    {timerVal === undefined && task.url && (
+                      <a
+                        href={task.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() => startSocialTimer(task.id)}
+                        className="flex h-10 shrink-0 items-center gap-1 rounded-lg border border-[#23232a] px-3 text-xs font-black text-[#d69a2d]"
+                      >
+                        <ExternalLink size={16} />
+                        Open
+                      </a>
+                    )}
+                    {timerVal !== undefined && timerVal > 0 && (
+                      <button
+                        type="button"
+                        disabled
+                        className="rounded-lg bg-[#17171c] px-3 py-2 text-xs font-black text-gray-500 cursor-not-allowed"
+                      >
+                        Wait {timerVal}s...
+                      </button>
+                    )}
+                    {timerVal === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => claimSocialTask(task.id)}
+                        disabled={!sessionReady}
+                        className="rounded-lg bg-[#d69a2d] hover:bg-[#b07e20] px-4 py-2 text-xs font-black text-black transition duration-200"
+                      >
+                        Claim
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1599,22 +1667,6 @@ function OnboardingScreen({
                     </button>
                   </div>
                 </div>
-              )}
-
-              {task.proofRequired && !complete && !pending && (
-                <input
-                  value={proofs[task.id] ?? ""}
-                  onChange={(event) =>
-                    setProofs((current) => ({ ...current, [task.id]: event.target.value }))
-                  }
-                  placeholder="Paste proof image/link URL"
-                  className="mt-3 h-10 w-full rounded-lg border border-[#23232a] bg-[#050505] px-3 text-xs text-[#f5f5f7] outline-none focus:border-[#ff8a00]"
-                />
-              )}
-              {pending && (
-                <p className="mt-3 rounded-lg border border-[#d69a2d] bg-[#211747]/40 px-3 py-2 text-center text-xs font-black text-[#d69a2d]">
-                  Submitted. Waiting for admin review.
-                </p>
               )}
             </article>
           );

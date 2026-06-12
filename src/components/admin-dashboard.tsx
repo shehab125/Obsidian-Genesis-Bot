@@ -10,9 +10,10 @@ import {
   Save,
   ShieldCheck,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   AppSettings,
   AppUser,
@@ -71,6 +72,22 @@ export function AdminDashboard({
   const [purchaseRows, setPurchaseRows] = useState(purchaseVerifications);
   const [settingsForm, setSettingsForm] = useState(settings);
   const [status, setStatus] = useState("Dashboard ready.");
+  const [rewardVaultBalance, setRewardVaultBalance] = useState("...");
+
+  useEffect(() => {
+    fetch("/api/admin/reward-vault")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.ok) {
+          setRewardVaultBalance(data.balance);
+        } else {
+          setRewardVaultBalance("Error");
+        }
+      })
+      .catch(() => {
+        setRewardVaultBalance("Error");
+      });
+  }, []);
 
   async function toggleUserFreezeState(id: string, currentFrozen: boolean) {
     const nextFrozen = !currentFrozen;
@@ -204,11 +221,12 @@ export function AdminDashboard({
             </p>
           </header>
 
-          <section className="grid gap-3 md:grid-cols-4">
+          <section className="grid gap-3 grid-cols-2 md:grid-cols-5">
             <Stat label="Users" value={stats.users} icon={<Users size={19} />} />
             <Stat label="Active tasks" value={taskRows.length} icon={<ListChecks size={19} />} />
             <Stat label="Task reviews" value={pendingReviews} icon={<Check size={19} />} />
             <Stat label="Purchase proofs" value={pendingPurchases} icon={<ShieldCheck size={19} />} />
+            <Stat label="Reward Vault" value={rewardVaultBalance} icon={<Wallet size={19} />} />
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
@@ -245,27 +263,13 @@ export function AdminDashboard({
                       setNewTask((current) => ({
                         ...current,
                         platform: event.target.value as TaskPlatform,
-                        proofRequired: event.target.value === "x" ? true : current.proofRequired,
                       }))
                     }
                     className="h-10 rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 text-sm outline-none"
                   >
                     <option value="telegram">Telegram</option>
-                    <option value="x">X manual review</option>
+                    <option value="x">X / Social</option>
                   </select>
-                  <label className="flex items-center gap-2 text-sm text-[#cbd5e1]">
-                    <input
-                      type="checkbox"
-                      checked={newTask.proofRequired}
-                      onChange={(event) =>
-                        setNewTask((current) => ({
-                          ...current,
-                          proofRequired: event.target.checked,
-                        }))
-                      }
-                    />
-                    Requires proof
-                  </label>
                   <button
                     type="button"
                     onClick={createNewTask}
@@ -414,22 +418,6 @@ export function AdminDashboard({
                     <span className="rounded-full border border-[#2d3646] px-3 py-1 text-xs text-[#94a3b8]">
                       {task.platform}
                     </span>
-                    <label className="flex items-center gap-2 text-sm text-[#cbd5e1]">
-                      <input
-                        type="checkbox"
-                        checked={task.proofRequired}
-                        onChange={(event) =>
-                          setTaskRows((rows) =>
-                            rows.map((row) =>
-                              row.id === task.id
-                                ? { ...row, proofRequired: event.target.checked }
-                                : row,
-                            ),
-                          )
-                        }
-                      />
-                      Requires proof
-                    </label>
                     <button
                       type="button"
                       onClick={() => saveTask(task)}
@@ -556,7 +544,7 @@ function NavItem({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function Stat({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+function Stat({ label, value, icon }: { label: string; value: string | number; icon: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-[#242a36] bg-[#11151d] p-4">
       <div className="flex items-center justify-between text-[#94a3b8]">

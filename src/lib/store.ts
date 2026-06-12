@@ -366,6 +366,83 @@ export async function completeTelegramTask(userId: string, taskId: string) {
   };
 }
 
+export async function completeSocialTask(userId: string, taskId: string) {
+  const supabase = getSupabaseServerClient();
+
+  if (!supabase) {
+    return { ok: false, message: "قاعدة البيانات غير متصلة." };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    return { ok: false, message: "المستخدم غير موجود." };
+  }
+
+  if (user.frozen) {
+    return { ok: false, message: "تم تجميد حسابك بسبب مخالفة القوانين." };
+  }
+
+  // 1. Anti-bot: Rate limiting check (max 10 tasks in the last 1 hour)
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count, error: countError } = await supabase
+    .from("task_completions")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("completed_at", oneHourAgo);
+
+  if (!countError && count !== null && count >= 10) {
+    return {
+      ok: false,
+      message: "أنت تقوم بإكمال المهام بسرعة كبيرة. يرجى الانتظار بعض الوقت.",
+    };
+  }
+
+  const { data: task } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("id", taskId)
+    .neq("platform", "telegram") // Social tasks (x, website, etc.)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!task) {
+    return { ok: false, message: "المهمة غير متوفرة أو غير صالحة." };
+  }
+
+  const { error: completionError } = await supabase.from("task_completions").insert({
+    user_id: userId,
+    task_id: taskId,
+    reward: task.reward,
+  });
+
+  if (completionError) {
+    return { ok: false, message: "تم صرف مكافأة هذه المهمة من قبل." };
+  }
+
+  const updatedUser = await awardRewardToUser(userId, task.reward);
+
+  // Referral overrides (10%)
+  if (user.referredBy) {
+    await awardReferralBonus(user.referredBy, userId, taskId, task.reward);
+  }
+
+  // Check onboarding completed trigger
+  await checkAndCompleteOnboarding(userId);
+
+  const settings = await getAppSettings();
+
+  return {
+    ok: true,
+    message:
+      settings.purchaseConditionEnabled && !user.purchaseVerified
+        ? "تمت إضافة المكافأة إلى الرصيد المعلق لحين تحقق شرط الشراء."
+        : "تم التحقق وإضافة المكافأة.",
+    balance: updatedUser?.balance ?? user.balance,
+    pendingBalance: updatedUser?.pendingBalance ?? user.pendingBalance,
+    withdrawableBalance: updatedUser?.withdrawableBalance ?? user.withdrawableBalance,
+  };
+}
+
 export async function createXSubmission(input: {
   taskId: string;
   userId: string;

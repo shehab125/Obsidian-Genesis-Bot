@@ -37,17 +37,22 @@ async function sendStartMessage(chatId: number, firstName: string | undefined, r
     return;
   }
 
+  const greeting = firstName ? `مرحباً ${firstName}!` : "مرحباً بك!";
+  const text = `💎 <b>${greeting}</b>\n\n🚀 <b>مرحباً بك في Obsidian Genesis (OBSD)</b>\n\n✅ أكمل المهام البسيطة واكسب رموز OBSD\n⛏️ فعّل عقدة التعدين واجمع المكافآت اليومية\n💰 اسحب أرباحك مباشرة إلى محفظتك اللامركزية\n\nاضغط على الزر أدناه لفتح التطبيق والبدء فوراً 👇`;
+
+  // 1. Send the start message with inline keyboard
   await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: `Welcome${firstName ? ` ${firstName}` : ""}. Open the rewards mini app to start mining OBSD.`,
+      text: text,
+      parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
           [
             {
-              text: "Open Rewards App",
+              text: "🎮 افتح تطبيق المكافآت / Open App",
               web_app: {
                 url: appUrl,
               },
@@ -57,4 +62,24 @@ async function sendStartMessage(chatId: number, firstName: string | undefined, r
       },
     }),
   });
+
+  // 2. Programmatically update the bottom-left persistent "Open App" menu button for this chat
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        menu_button: {
+          type: "web_app",
+          text: "Open App",
+          web_app: {
+            url: appUrl,
+          },
+        },
+      }),
+    });
+  } catch (err) {
+    console.error("Failed to update chat menu button:", err);
+  }
 }
