@@ -167,9 +167,9 @@ export async function getMiniAppBootstrapData() {
   };
 }
 
-export async function getMiniAppDataFromInitData(initData: string) {
+export async function getMiniAppDataFromInitData(initData: string, referrerId?: string | null) {
   noStore();
-  const user = await getUserFromTelegramInitData(initData);
+  const user = await getUserFromTelegramInitData(initData, referrerId);
   if (!user) {
     return null;
   }
@@ -976,7 +976,7 @@ export async function verifyUserPurchase(userId: string) {
   };
 }
 
-async function getUserFromTelegramInitData(initData: string) {
+async function getUserFromTelegramInitData(initData: string, referrerId?: string | null) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!botToken || !verifyTelegramInitData(initData, botToken)) {
@@ -985,7 +985,8 @@ async function getUserFromTelegramInitData(initData: string) {
 
   const params = new URLSearchParams(initData);
   const rawUser = params.get("user");
-  const startParam = params.get("start_param"); // Referrer Telegram ID
+  // Check start_param from initData first, then fallback to referrerId from WebApp URL query
+  const startParam = params.get("start_param") || referrerId;
   if (!rawUser) {
     return null;
   }

@@ -94,11 +94,13 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
       }
       return;
     }
+    const urlParams = new URLSearchParams(window.location.search);
+    const referrerId = urlParams.get("start_param");
 
     fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData }),
+      body: JSON.stringify({ initData, referrerId }),
     })
       .then((response) => response.json())
       .then((payload) => {

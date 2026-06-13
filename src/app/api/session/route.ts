@@ -4,6 +4,7 @@ import { getMiniAppDataFromInitData } from "@/lib/store";
 
 const sessionSchema = z.object({
   initData: z.string().min(1),
+  referrerId: z.string().optional().nullable(),
 });
 
 export async function POST(request: Request) {
@@ -13,7 +14,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: "Missing Telegram init data." }, { status: 400 });
   }
 
-  const data = await getMiniAppDataFromInitData(body.data.initData);
+  const data = await getMiniAppDataFromInitData(body.data.initData, body.data.referrerId);
 
   if (!data) {
     return NextResponse.json({ ok: false, message: "Invalid Telegram session." }, { status: 401 });

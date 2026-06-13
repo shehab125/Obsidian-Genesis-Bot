@@ -22,16 +22,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  if (message.text === "/start") {
-    await sendStartMessage(message.chat.id, message.from?.first_name, new URL(request.url).origin);
+  const text = message.text ?? "";
+  if (text.startsWith("/start")) {
+    const parts = text.split(" ");
+    const referrerId = parts.length > 1 ? parts[1].trim() : null;
+    await sendStartMessage(
+      message.chat.id,
+      message.from?.first_name,
+      new URL(request.url).origin,
+      referrerId
+    );
   }
 
   return NextResponse.json({ ok: true });
 }
 
-async function sendStartMessage(chatId: number, firstName: string | undefined, requestOrigin: string) {
+async function sendStartMessage(
+  chatId: number,
+  firstName: string | undefined,
+  requestOrigin: string,
+  referrerId?: string | null
+) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const appUrl = `${requestOrigin || process.env.NEXT_PUBLIC_APP_URL}?v=${Date.now()}`;
+  const baseOrigin = requestOrigin || process.env.NEXT_PUBLIC_APP_URL;
+  
+  // Construct URL, appending start_param if referrerId exists
+  const appUrl = `${baseOrigin}?v=${Date.now()}${referrerId ? `&start_param=${referrerId}` : ""}`;
 
   if (!botToken || !appUrl) {
     return;
