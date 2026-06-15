@@ -582,12 +582,15 @@ export async function createWithdrawal(input: {
 
 async function getErc20Balance(tokenAddress: string, walletAddress: string, decimals = 18): Promise<number> {
   const rpcUrls = [
+    "https://polygon-rpc.com",
+    "https://rpc.ankr.com/polygon",
+    "https://polygon.llamarpc.com",
     "https://polygon-bor.publicnode.com",
     "https://polygon.drpc.org",
     "https://1rpc.io/matic"
   ];
   
-  const cleanWallet = walletAddress.toLowerCase().replace(/^0x/, "");
+  const cleanWallet = walletAddress.trim().toLowerCase().replace(/^0x/, "");
   const paddedWallet = cleanWallet.padStart(64, "0");
   const data = "0x70a08231" + paddedWallet;
   
@@ -677,9 +680,10 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
   }
 
   // 3. Log approved purchase verification
+  const cleanWalletAddress = walletAddress.trim().toLowerCase();
   await supabase.from("purchase_verification_requests").insert({
     user_id: userId,
-    wallet_address: walletAddress,
+    wallet_address: cleanWalletAddress,
     proof_url: "Automatic Web3 Verification",
     status: "approved",
     reviewed_at: new Date().toISOString()
@@ -827,7 +831,7 @@ export async function updateTask(input: {
     .maybeSingle();
 
   if (error || !data) {
-    return { ok: false, message: "تعذر تحديث المهمة." };
+    return { ok: false, message: "تعذر تحديث المهمة." + (error ? ` : ${error.message}` : "") };
   }
 
   return { ok: true, message: "تم تحديث المهمة." };
@@ -864,7 +868,7 @@ export async function createTask(input: {
     .single();
 
   if (error || !data) {
-    return { ok: false, message: "Could not create task." };
+    return { ok: false, message: "Could not create task: " + (error ? error.message : "") };
   }
 
   return {
@@ -898,7 +902,7 @@ export async function updateAppSettings(input: AppSettings) {
   );
 
   if (error) {
-    return { ok: false, message: "تعذر تحديث الإعدادات." };
+    return { ok: false, message: "تعذر تحديث الإعدادات: " + error.message };
   }
 
   return { ok: true, message: "تم تحديث إعدادات السحب والشراء والتعليق." };
@@ -1121,6 +1125,9 @@ async function getOnChainTokenPrice(tokenAddress: string, defaultPrice: number):
   }
 
   const rpcUrls = [
+    "https://polygon-rpc.com",
+    "https://rpc.ankr.com/polygon",
+    "https://polygon.llamarpc.com",
     "https://polygon-bor.publicnode.com",
     "https://polygon.drpc.org",
     "https://1rpc.io/matic"
@@ -1472,6 +1479,15 @@ export async function startMiningSession(userId: string) {
     return { ok: false, message: "يجب إكمال المهام الإلزامية أولاً." };
   }
 
+  if (user.miningCyclesCompleted > 0) {
+    if (user.referralCount < 3) {
+      return { ok: false, message: "يجب عليك دعوة 3 مستخدمين على الأقل لتفعيل دورات التعدين التالية." };
+    }
+    if (!user.purchaseVerified) {
+      return { ok: false, message: "يجب عليك تفعيل التعدين بالتحقق من شراء الرموز أولاً." };
+    }
+  }
+
   // Check if there is already an active session (running or unclaimed)
   const activeSession = await getUserActiveMiningSession(userId);
   if (activeSession) {
@@ -1793,7 +1809,7 @@ export async function toggleUserFreeze(userId: string, frozen: boolean) {
     .eq("id", userId);
 
   if (error) {
-    return { ok: false, message: "تعذر تحديث حالة تجميد الحساب." };
+    return { ok: false, message: "تعذر تحديث حالة تجميد الحساب: " + error.message };
   }
 
   return { ok: true, message: frozen ? "تم تجميد حساب المستخدم بنجاح." : "تم إلغاء تجميد حساب المستخدم بنجاح." };

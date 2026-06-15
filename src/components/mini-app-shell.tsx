@@ -455,6 +455,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               sessionReady={sessionReady}
               miningCyclesCompleted={currentUser.miningCyclesCompleted}
               purchaseVerified={currentUser.purchaseVerified}
+              referralCount={currentUser.referralCount}
               changeTab={changeTab}
             />
           )}
@@ -488,6 +489,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               setPurchaseProofUrl={setPurchaseProofUrl}
               requestWithdrawal={requestWithdrawal}
               submitPurchaseVerification={submitPurchaseVerification}
+              changeTab={changeTab}
             />
           )}
           {activeTab === "nodes" && <NodesScreen user={currentUser} />}
@@ -514,6 +516,7 @@ function HomeScreen({
   sessionReady,
   miningCyclesCompleted,
   purchaseVerified,
+  referralCount,
   changeTab,
 }: {
   tasks: Task[];
@@ -527,6 +530,7 @@ function HomeScreen({
   sessionReady: boolean;
   miningCyclesCompleted: number;
   purchaseVerified: boolean;
+  referralCount: number;
   changeTab: (tab: any) => void;
 }) {
   const isMiningLocked = miningCyclesCompleted === 0;
@@ -563,9 +567,27 @@ function HomeScreen({
         </section>
       )}
 
-      {!isMiningLocked && !purchaseVerified && allSocialTasksDone && (
+      {!isMiningLocked && referralCount < 3 && allSocialTasksDone && (
         <section className="mt-8 rounded-[20px] border border-[#ff8a00]/30 bg-[#ff8a00]/5 p-5 text-center shadow-[0_0_30px_rgba(255,138,0,0.05)]">
-          <p className="text-sm font-black text-[#ff8a00]">🚀 Social Tasks Complete!</p>
+          <p className="text-sm font-black text-[#ff8a00]">👥 On to the Next Step / الخطوة التالية</p>
+          <p className="mt-2 text-xs text-gray-400 leading-relaxed">
+            لقد أتممت مهام السوشيال ميديا! لدخول خطوة التفعيل بالشراء والحصول على المكافأة المضاعفة، يرجى دعوة 3 أصدقاء أولاً.
+          </p>
+          <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+            You completed social tasks! To unlock the token hold verification step and double your rewards, please invite 3 friends first.
+          </p>
+          <button
+            onClick={() => changeTab("nodes")}
+            className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d87500] text-xs font-black text-white rounded-xl transition duration-200 animate-pulse"
+          >
+            Invite Friends (دعوة الأصدقاء)
+          </button>
+        </section>
+      )}
+
+      {!isMiningLocked && referralCount >= 3 && !purchaseVerified && allSocialTasksDone && (
+        <section className="mt-8 rounded-[20px] border border-[#ff8a00]/30 bg-[#ff8a00]/5 p-5 text-center shadow-[0_0_30px_rgba(255,138,0,0.05)]">
+          <p className="text-sm font-black text-[#ff8a00]">🚀 Social Tasks & Referrals Complete!</p>
           <p className="mt-2 text-xs text-gray-400 leading-relaxed">
             To start your next mining cycle, activate your 2x boost, and enable withdrawals, please buy $5-$10 of OBSD on QuickSwap and submit verification in the Wallet tab.
           </p>
@@ -888,7 +910,9 @@ function MiningScreen({
     };
   }, [activeSession, lastSessionStart, user.purchaseVerified]);
 
-  const isMiningLocked = user.miningCyclesCompleted > 0 && !user.purchaseVerified;
+  const isReferralLocked = user.miningCyclesCompleted > 0 && user.referralCount < 3;
+  const isPurchaseLocked = user.miningCyclesCompleted > 0 && user.referralCount >= 3 && !user.purchaseVerified;
+  const isMiningLocked = isReferralLocked || isPurchaseLocked;
   const boostMultiplier = user.purchaseVerified ? 2 : 1;
   const velocity = (boostMultiplier * 0.10) / (tokenUsdPrice || 0.001);
   const usdAccrued = accrued * tokenUsdPrice;
@@ -926,7 +950,67 @@ function MiningScreen({
         </div>
       </section>
 
-      {isMiningLocked ? (
+      {isReferralLocked ? (
+        <section className="mt-8 rounded-[24px] border border-[#ff8a00]/30 bg-[#0c0a05] p-6 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="mx-auto grid size-16 place-items-center rounded-full bg-[#ff8a00]/10 text-[#ff8a00] text-3xl">
+              👥
+            </div>
+            <h2 className="text-xl font-black text-white">تفعيل الإحالات مطلوب</h2>
+            <h3 className="text-sm font-black text-gray-300">Referrals Required</h3>
+            <p className="text-xs text-gray-400 leading-relaxed px-2">
+              لقد أكملت دورة التعدين الأولى بنجاح! للوصول إلى خطوة الشراء والمكافأة المضاعفة وتفعيل التعدين اللانهائي، يرجى دعوة 3 أصدقاء أولاً لتسجيل حساباتهم.
+            </p>
+            <p className="text-xs text-gray-500 leading-relaxed px-2">
+              You completed your first mining cycle! To proceed to the hold verification step, double your mining speed, and unlock infinite cycles, please invite at least 3 friends first.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#121216] border border-[#23232a] text-center">
+            <p className="text-[10px] uppercase font-bold text-gray-500">حالة الإحالات / Invites Progress</p>
+            <p className="text-2xl font-black text-[#ff8a00] mt-1">
+              {user.referralCount} / 3
+            </p>
+            <div className="w-full bg-gray-800 rounded-full h-2 mt-3 overflow-hidden">
+              <div
+                className="bg-[#ff8a00] h-2 rounded-full transition-all duration-300"
+                style={{ width: `${Math.min((user.referralCount / 3) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+            <div>
+              <p className="font-bold text-[#ff8a00]">رابط الإحالة الفريد الخاص بك:</p>
+              <p className="text-[11px] text-gray-400 mt-1 leading-normal font-mono">
+                {`t.me/rewards_tasks_demo_bot?start=${user.telegramId}`}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`t.me/rewards_tasks_demo_bot?start=${user.telegramId}`);
+                  alert("Referral link copied!");
+                }}
+                className="flex-1 h-10 bg-[#211747] text-xs font-bold rounded-lg border border-[#ff8a00]/30 text-white"
+              >
+                Copy Link (نسخ الرابط)
+              </button>
+            </div>
+            <a
+              href={`https://t.me/share/url?url=https://t.me/rewards_tasks_demo_bot?start=${user.telegramId}&text=${encodeURIComponent(
+                "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center h-10 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+            >
+              Share on Telegram (مشاركة الرابط)
+            </a>
+          </div>
+        </section>
+      ) : isPurchaseLocked ? (
         <section className="mt-8 rounded-[24px] border border-[#ff8a00]/30 bg-[#0c0a05] p-6 space-y-6">
           <div className="text-center space-y-2">
             <div className="mx-auto grid size-16 place-items-center rounded-full bg-[#ff8a00]/10 text-[#ff8a00] text-3xl">
@@ -1103,6 +1187,7 @@ function WalletScreen({
   setPurchaseProofUrl,
   requestWithdrawal,
   submitPurchaseVerification,
+  changeTab,
 }: {
   user: AppUser;
   settings: AppSettings;
@@ -1117,7 +1202,9 @@ function WalletScreen({
   setPurchaseProofUrl: (value: string) => void;
   requestWithdrawal: () => Promise<void>;
   submitPurchaseVerification: () => Promise<void>;
+  changeTab: (tab: any) => void;
 }) {
+  const referralLocked = settings.purchaseConditionEnabled && user.miningCyclesCompleted > 0 && user.referralCount < 3;
   const locked = settings.purchaseConditionEnabled && !user.purchaseVerified;
   const usdBalance = balance * settings.tokenUsdPrice;
 
@@ -1162,105 +1249,129 @@ function WalletScreen({
         </div>
       </div>
 
-      {cooldownActive && (
-        <section className="mt-6 rounded-[16px] border border-red-500/30 bg-red-950/10 p-4 shadow-[0_0_20px_rgba(239,68,68,0.05)]">
-          <p className="text-xs font-bold text-red-400 uppercase tracking-wider">
-            Withdrawal Cooldown Hold Active
-          </p>
-          <p className="mt-1 text-sm text-gray-300">
-            Your withdrawable balance is subject to a security hold period. It will unlock in:
-          </p>
-          <p className="mt-3 text-2xl font-black text-red-500 font-mono tracking-widest">
-            {timeLeft}
-          </p>
-        </section>
-      )}
-
-      <section className="mt-6 rounded-[20px] border border-[#241747] bg-[#17171c] p-5">
-        <p className="text-sm uppercase tracking-wide text-[#a1a1aa]">
-          Critical system unlock requirement
-        </p>
-        <h2 className="mt-4 text-[21px] font-black">Connect Polygon Web3 Node</h2>
-        <p className="mt-3 text-[15px] leading-6 text-[#a1a1aa]">
-          Verifies account authenticity and unlocks withdrawable balance.
-        </p>
-      </section>
-
-      <section className="mt-7 rounded-[20px] border border-dashed border-[#ff8a00] bg-[#0b0b0d] p-5">
-        <h2 className="text-lg font-black">Verification Steps</h2>
-        <Step ok label="Secure Handshake Protocol" />
-        <Step
-          ok={!locked}
-          label="Minimum Balance Evaluation"
-          error={
-            locked
-              ? `Failed: Requires $${settings.requiredPurchaseUsd.toFixed(2)} USD equivalent in OBSD tokens`
-              : undefined
-          }
-        />
-        {locked && (
-          <div className="mt-4 p-4 rounded-[12px] bg-[#120c02] border border-[#ff8a00]/30 text-xs text-gray-300">
-            <p className="font-bold text-[#ff8a00] mb-1">Need OBSD tokens to unlock?</p>
-            <p className="mb-3 text-gray-400 font-medium">
-              You can swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
-            </p>
-            <a
-              href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center px-4 h-9 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
-            >
-              Buy OBSD on QuickSwap
-            </a>
+      {referralLocked ? (
+        <section className="mt-8 rounded-[24px] border border-red-500/30 bg-[#0d0b0b] p-6 text-center space-y-6 shadow-[0_0_30px_rgba(239,68,68,0.05)]">
+          <div className="mx-auto grid size-16 place-items-center rounded-full bg-red-500/10 text-red-500 text-3xl">
+            🔒
           </div>
-        )}
-      </section>
+          <h2 className="text-xl font-black text-white">قفل الإحالات نشط</h2>
+          <h3 className="text-sm font-black text-gray-300">Referrals Gate Active</h3>
+          <p className="text-xs text-gray-400 leading-relaxed px-2">
+            يرجى دعوة 3 أصدقاء أولاً لتتمكن من الوصول لربط المحفظة وإثبات الشراء وسحب الأرباح.
+          </p>
+          <p className="text-xs text-gray-500 leading-relaxed px-2">
+            Please invite 3 friends first to unlock the wallet connection, hold verification, and withdrawal options.
+          </p>
+          <button
+            onClick={() => changeTab("nodes")}
+            className="w-full h-12 bg-[#ff8a00] text-black text-sm font-black rounded-xl hover:bg-[#e07b00] transition duration-200"
+          >
+            Go to Invites (صفحة الإحالات)
+          </button>
+        </section>
+      ) : (
+        <>
+          {cooldownActive && (
+            <section className="mt-6 rounded-[16px] border border-red-500/30 bg-red-950/10 p-4 shadow-[0_0_20px_rgba(239,68,68,0.05)]">
+              <p className="text-xs font-bold text-red-400 uppercase tracking-wider">
+                Withdrawal Cooldown Hold Active
+              </p>
+              <p className="mt-1 text-sm text-gray-300">
+                Your withdrawable balance is subject to a security hold period. It will unlock in:
+              </p>
+              <p className="mt-3 text-2xl font-black text-red-500 font-mono tracking-widest">
+                {timeLeft}
+              </p>
+            </section>
+          )}
 
-      <div className="mt-8 grid grid-cols-3 gap-3">
-        <MetricCard title="Total" value={balance} suffix="" />
-        <MetricCard title="Pending" value={pendingBalance} suffix="" />
-        <MetricCard title="Ready" value={withdrawableBalance} suffix="" />
-      </div>
-      <p className="mt-3 text-center text-xs font-black text-[#a1a1aa]">
-        OBSD price: ${settings.tokenUsdPrice.toFixed(6)} | Balance: ${usdBalance.toFixed(2)}
-      </p>
+          <section className="mt-6 rounded-[20px] border border-[#241747] bg-[#17171c] p-5">
+            <p className="text-sm uppercase tracking-wide text-[#a1a1aa]">
+              Critical system unlock requirement
+            </p>
+            <h2 className="mt-4 text-[21px] font-black">Connect Polygon Web3 Node</h2>
+            <p className="mt-3 text-[15px] leading-6 text-[#a1a1aa]">
+              Verifies account authenticity and unlocks withdrawable balance.
+            </p>
+          </section>
 
-      <section className="mt-6 space-y-3">
-        <input
-          value={withdrawAmount}
-          onChange={(event) => setWithdrawAmount(event.target.value)}
-          inputMode="numeric"
-          className="h-12 w-full rounded-[12px] border border-[#ff8a00] bg-[#080808] px-4 text-sm font-bold outline-none"
-        />
-        <input
-          value={walletAddress}
-          onChange={(event) => setWalletAddress(event.target.value)}
-          placeholder="Wallet address"
-          className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
-        />
-        {locked && (
+          <section className="mt-7 rounded-[20px] border border-dashed border-[#ff8a00] bg-[#0b0b0d] p-5">
+            <h2 className="text-lg font-black">Verification Steps</h2>
+            <Step ok label="Secure Handshake Protocol" />
+            <Step
+              ok={!locked}
+              label="Minimum Balance Evaluation"
+              error={
+                locked
+                  ? `Failed: Requires $${settings.requiredPurchaseUsd.toFixed(2)} USD equivalent in OBSD tokens`
+                  : undefined
+              }
+            />
+            {locked && (
+              <div className="mt-4 p-4 rounded-[12px] bg-[#120c02] border border-[#ff8a00]/30 text-xs text-gray-300">
+                <p className="font-bold text-[#ff8a00] mb-1">Need OBSD tokens to unlock?</p>
+                <p className="mb-3 text-gray-400 font-medium">
+                  You can swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
+                </p>
+                <a
+                  href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center px-4 h-9 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+                >
+                  Buy OBSD on QuickSwap
+                </a>
+              </div>
+            )}
+          </section>
+
+          <div className="mt-8 grid grid-cols-3 gap-3">
+            <MetricCard title="Total" value={balance} suffix="" />
+            <MetricCard title="Pending" value={pendingBalance} suffix="" />
+            <MetricCard title="Ready" value={withdrawableBalance} suffix="" />
+          </div>
+          <p className="mt-3 text-center text-xs font-black text-[#a1a1aa]">
+            OBSD price: ${settings.tokenUsdPrice.toFixed(6)} | Balance: ${usdBalance.toFixed(2)}
+          </p>
+
+          <section className="mt-6 space-y-3">
+            <input
+              value={withdrawAmount}
+              onChange={(event) => setWithdrawAmount(event.target.value)}
+              inputMode="numeric"
+              className="h-12 w-full rounded-[12px] border border-[#ff8a00] bg-[#080808] px-4 text-sm font-bold outline-none"
+            />
+            <input
+              value={walletAddress}
+              onChange={(event) => setWalletAddress(event.target.value)}
+              placeholder="Wallet address"
+              className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
+            />
+            {locked && (
+              <button
+                type="button"
+                onClick={submitPurchaseVerification}
+                className="h-12 w-full rounded-[12px] border border-[#31d67b] bg-[#062219] text-sm font-black text-[#31d67b]"
+              >
+                Verify Purchase (Automatic)
+              </button>
+            )}
+          </section>
+
           <button
             type="button"
-            onClick={submitPurchaseVerification}
-            className="h-12 w-full rounded-[12px] border border-[#31d67b] bg-[#062219] text-sm font-black text-[#31d67b]"
+            onClick={requestWithdrawal}
+            disabled={cooldownActive}
+            className={`mt-7 h-16 w-full rounded-[16px] text-[17px] font-black text-white ${
+              cooldownActive
+                ? "bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-700"
+                : "bg-[#d69a2d]"
+            }`}
           >
-            Verify Purchase (Automatic)
+            {cooldownActive ? `Cooldown Active (${timeLeft})` : "Execute RPC Validation Protocol"}
           </button>
-        )}
-      </section>
-
-      <button
-        type="button"
-        onClick={requestWithdrawal}
-        disabled={cooldownActive}
-        className={`mt-7 h-16 w-full rounded-[16px] text-[17px] font-black text-white ${
-          cooldownActive
-            ? "bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-700"
-            : "bg-[#d69a2d]"
-        }`}
-      >
-        {cooldownActive ? `Cooldown Active (${timeLeft})` : "Execute RPC Validation Protocol"}
-      </button>
+        </>
+      )}
     </div>
   );
 }
@@ -1279,9 +1390,9 @@ function NodesScreen({ user }: { user: AppUser }) {
         <MetricCard title="Invites" value={user.referralCount} suffix="" highlight />
         <MetricCard title="Balance" value={user.balance} suffix="OBSD" />
       </div>
-      <section className="mt-7 rounded-[18px] border border-[#d69a2d] bg-[#0b0b0d] p-5">
+      <section className="mt-7 rounded-[18px] border border-[#d69a2d] bg-[#0b0b0d] p-5 space-y-4">
         <h2 className="text-sm font-black">UNIQUE ASSIGNMENT VECTOR URL</h2>
-        <div className="mt-4 flex gap-3">
+        <div className="flex gap-3">
           <div className="min-w-0 flex-1 rounded-lg border border-[#d69a2d] px-3 py-3 text-sm overflow-x-auto whitespace-nowrap">
             {referralPath || "Open from Telegram first"}
           </div>
@@ -1289,17 +1400,29 @@ function NodesScreen({ user }: { user: AppUser }) {
             type="button"
             onClick={() => {
               if (referralPath) {
-                navigator.clipboard.writeText(referralPath);
+                navigator.clipboard.writeText(`https://${referralPath}`);
                 alert("Invite link copied to clipboard!");
               } else {
                 alert("No link available. Open in Telegram.");
               }
             }}
-            className="grid size-12 place-items-center rounded-lg bg-[#211747] text-[#ff8a00] hover:bg-[#2d225c]"
+            className="grid size-12 place-items-center rounded-lg bg-[#211747] text-[#ff8a00] hover:bg-[#2d225c] border border-[#d69a2d]/25 shrink-0"
           >
             <Copy size={18} />
           </button>
         </div>
+        {referralPath && (
+          <a
+            href={`https://t.me/share/url?url=https://${referralPath}&text=${encodeURIComponent(
+              "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+            )}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex w-full items-center justify-center h-11 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+          >
+            Share Link on Telegram (مشاركة الرابط)
+          </a>
+        )}
       </section>
       <section className="mt-6 rounded-[18px] border border-[#d69a2d] bg-[#0b0b0d] p-5">
         <h2 className="text-lg font-black">Weekly Pipeline Velocity</h2>
