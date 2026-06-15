@@ -2001,3 +2001,22 @@ export async function runMiningNotificationsCheck() {
     message: `Mining check completed. Notified ${notifiedCount} users.`,
   };
 }
+
+export async function deleteTask(id: string) {
+  const supabase = getSupabaseServerClient();
+
+  if (!supabase) {
+    return { ok: false, message: "قاعدة البيانات غير متصلة." };
+  }
+
+  const { error } = await supabase
+    .from("tasks")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    return { ok: false, message: "تعذر حذف المهمة: " + error.message };
+  }
+
+  return { ok: true, message: "تم حذف المهمة بنجاح." };
+}

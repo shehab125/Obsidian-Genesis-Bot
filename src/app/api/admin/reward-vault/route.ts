@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
+import { getAppSettings } from "@/lib/store";
 
 const POLYGON_RPC_ENDPOINTS = [
+  "https://polygon-rpc.com",
+  "https://rpc.ankr.com/polygon",
+  "https://polygon.llamarpc.com",
   "https://polygon-bor.publicnode.com",
   "https://polygon.drpc.org",
-  "https://1rpc.io/matic",
+  "https://1rpc.io/matic"
 ];
-
-const OBSD_CONTRACT = "0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F";
-const OWNER_WALLET = "0x7167C08FD45021c68993057d73f3b359446826350";
-const ERC20_BALANCE_SELECTOR = "0x70a08231";
 
 async function fetchWithFallback(endpoints: string[], body: string): Promise<any> {
   let lastError = null;
@@ -31,9 +31,29 @@ async function fetchWithFallback(endpoints: string[], body: string): Promise<any
 
 export async function GET(request: Request) {
   try {
-    // Format balance call: balanceof(address) -> selector + 32-bytes padded address
-    const paddedAddress = OWNER_WALLET.replace("0x", "").toLowerCase().padStart(64, "0");
-    const data = `${ERC20_BALANCE_SELECTOR}${paddedAddress}`;
+    const settings = await getAppSettings();
+    const contractAddress = settings.tokenContractAddress || "0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F";
+    const ownerWallet = settings.ownerWallet;
+
+    if (!ownerWallet) {
+      return NextResponse.json({
+        ok: false,
+        balance: "Error",
+        message: "Owner wallet address not configured in settings."
+      });
+    }
+
+    const cleanWallet = ownerWallet.trim().toLowerCase().replace(/^0x/, "");
+    if (cleanWallet.length !== 40) {
+      return NextResponse.json({
+        ok: false,
+        balance: "Error",
+        message: `Owner wallet address is invalid. Must be exactly 40 hex characters (excluding 0x). Got: ${ownerWallet}`
+      });
+    }
+
+    const paddedAddress = cleanWallet.padStart(64, "0");
+    const data = `0x70a08231${paddedAddress}`;
 
     const result = await fetchWithFallback(
       POLYGON_RPC_ENDPOINTS,
@@ -41,7 +61,7 @@ export async function GET(request: Request) {
         jsonrpc: "2.0",
         id: 1,
         method: "eth_call",
-        params: [{ to: OBSD_CONTRACT, data }, "latest"],
+        params: [{ to: contractAddress, data }, "latest"],
       })
     );
 
@@ -59,7 +79,7 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json({
       ok: false,
-      balance: "Error fetching",
+      balance: "Error",
       message: String(error),
     });
   }

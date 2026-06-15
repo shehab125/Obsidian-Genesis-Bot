@@ -82,10 +82,14 @@ export function AdminDashboard({
           setRewardVaultBalance(data.balance);
         } else {
           setRewardVaultBalance("Error");
+          if (data.message) {
+            setStatus("Reward Vault: " + data.message);
+          }
         }
       })
       .catch(() => {
         setRewardVaultBalance("Error");
+        setStatus("Failed to connect to Reward Vault API.");
       });
   }, []);
 
@@ -133,6 +137,20 @@ export function AdminDashboard({
     });
     const payload = await response.json();
     setStatus(payload.message);
+  }
+
+  async function deleteTask(id: string) {
+    if (!window.confirm("هل أنت متأكد من رغبتك في حذف هذه المهمة نهائياً؟")) {
+      return;
+    }
+    const response = await fetch(`/api/admin/tasks/${id}`, {
+      method: "DELETE",
+    });
+    const payload = await response.json();
+    setStatus(payload.message);
+    if (payload.ok) {
+      setTaskRows((rows) => rows.filter((row) => row.id !== id));
+    }
   }
 
   async function saveSettings() {
@@ -418,13 +436,22 @@ export function AdminDashboard({
                     <span className="rounded-full border border-[#2d3646] px-3 py-1 text-xs text-[#94a3b8]">
                       {task.platform}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => saveTask(task)}
-                      className="h-10 rounded-lg bg-[#1f6f57] px-4 text-sm font-black text-white"
-                    >
-                      Save task
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => deleteTask(task.id)}
+                        className="h-10 rounded-lg border border-red-500/30 bg-red-950/20 text-red-400 hover:bg-red-950/40 px-4 text-sm font-black"
+                      >
+                        حذف المهمة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveTask(task)}
+                        className="h-10 rounded-lg bg-[#1f6f57] px-4 text-sm font-black text-white"
+                      >
+                        Save task
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
