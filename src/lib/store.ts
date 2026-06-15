@@ -1068,6 +1068,22 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
 
     if (!error && newUser) {
       data = newUser;
+      
+      // Increment referrer's referral_count immediately upon registration to prevent onboarding deadlock
+      if (referredById) {
+        const { data: referrer } = await supabase
+          .from("app_users")
+          .select("referral_count")
+          .eq("id", referredById)
+          .maybeSingle();
+
+        if (referrer) {
+          await supabase
+            .from("app_users")
+            .update({ referral_count: (referrer.referral_count || 0) + 1 })
+            .eq("id", referredById);
+        }
+      }
     }
   } else {
     // update details if changed
@@ -1707,21 +1723,6 @@ export async function checkAndCompleteOnboarding(userId: string) {
 
   if (count === onboardingTasks.length) {
     await supabase.from("app_users").update({ onboarding_completed: true }).eq("id", userId);
-
-    if (user.referredBy) {
-      const { data: referrer } = await supabase
-        .from("app_users")
-        .select("referral_count")
-        .eq("id", user.referredBy)
-        .maybeSingle();
-
-      if (referrer) {
-        await supabase
-          .from("app_users")
-          .update({ referral_count: (referrer.referral_count || 0) + 1 })
-          .eq("id", user.referredBy);
-      }
-    }
   }
 }
 

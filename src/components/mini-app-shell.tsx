@@ -413,7 +413,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
     );
   }
 
-  const referralLink = currentUser.telegramId ? `t.me/rewards_tasks_demo_bot?start=${currentUser.telegramId}` : "";
+  const referralLink = currentUser.telegramId ? `https://t.me/rewards_tasks_demo_bot?start=${currentUser.telegramId}` : "";
 
   if (!currentUser.onboardingCompleted) {
     return (
@@ -1769,7 +1769,7 @@ function OnboardingScreen({
               </div>
 
               {isReferral && !complete && (
-                <div className="mt-4 p-3 rounded-lg bg-[#121216] border border-[#23232a] space-y-2">
+                <div className="mt-4 p-3 rounded-lg bg-[#121216] border border-[#23232a] space-y-3">
                   <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
                     Your Invite Link:
                   </p>
@@ -1791,6 +1791,16 @@ function OnboardingScreen({
                       Copy
                     </button>
                   </div>
+                  <a
+                    href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(
+                      "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex w-full items-center justify-center h-10 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
+                  >
+                    Share on Telegram (مشاركة الرابط)
+                  </a>
                 </div>
               )}
             </article>
