@@ -73,6 +73,13 @@ export function AdminDashboard({
   const [settingsForm, setSettingsForm] = useState(settings);
   const [status, setStatus] = useState("Dashboard ready.");
   const [rewardVaultBalance, setRewardVaultBalance] = useState("...");
+  const [influencers, setInfluencers] = useState<any[]>([]);
+  const [newInfluencer, setNewInfluencer] = useState({
+    code: "",
+    name: "",
+    telegramId: "",
+    commissionUsd: 0.50,
+  });
 
   useEffect(() => {
     fetch("/api/admin/reward-vault")
@@ -91,7 +98,57 @@ export function AdminDashboard({
         setRewardVaultBalance("Error");
         setStatus("Failed to connect to Reward Vault API.");
       });
+
+    fetch("/api/admin/influencers")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.ok) {
+          setInfluencers(data.influencers || []);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  async function createInfluencer() {
+    if (!newInfluencer.code || !newInfluencer.name || !newInfluencer.telegramId) {
+      alert("يرجى ملء جميع الحقول المطلوبة لإنشاء رابط الوكيل");
+      return;
+    }
+    const response = await fetch("/api/admin/influencers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newInfluencer),
+    });
+    const payload = await response.json();
+    setStatus(payload.message);
+    if (payload.ok) {
+      const res = await fetch("/api/admin/influencers");
+      const data = await res.json();
+      if (data.ok) {
+        setInfluencers(data.influencers || []);
+      }
+      setNewInfluencer({
+        code: "",
+        name: "",
+        telegramId: "",
+        commissionUsd: 0.50,
+      });
+    }
+  }
+
+  async function deleteInfluencer(code: string) {
+    if (!window.confirm("هل أنت متأكد من حذف رابط الوكيل هذا؟")) {
+      return;
+    }
+    const response = await fetch(`/api/admin/influencers/${code}`, {
+      method: "DELETE",
+    });
+    const payload = await response.json();
+    setStatus(payload.message);
+    if (payload.ok) {
+      setInfluencers((list) => list.filter((inf) => inf.code !== code));
+    }
+  }
 
   async function toggleUserFreezeState(id: string, currentFrozen: boolean) {
     const nextFrozen = !currentFrozen;
@@ -357,6 +414,14 @@ export function AdminDashboard({
                     setSettingsForm((current) => ({ ...current, withdrawalLockDays: value }))
                   }
                 />
+                <SettingNumber
+                  label="Base Purchase Reward USD"
+                  value={settingsForm.baseRewardUsd || 1.00}
+                  step="0.01"
+                  onChange={(value) =>
+                    setSettingsForm((current) => ({ ...current, baseRewardUsd: value }))
+                  }
+                />
                 <label className="flex items-center justify-between rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 py-3 text-sm">
                   Hold rewards until purchase proof
                   <input
@@ -366,6 +431,19 @@ export function AdminDashboard({
                       setSettingsForm((current) => ({
                         ...current,
                         purchaseConditionEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="flex items-center justify-between rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 py-3 text-sm">
+                  Bot Active / تشغيل البوت (إيقاف عام)
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.botActive}
+                    onChange={(event) =>
+                      setSettingsForm((current) => ({
+                        ...current,
+                        botActive: event.target.checked,
                       }))
                     }
                   />
@@ -380,6 +458,101 @@ export function AdminDashboard({
               </div>
             </Panel>
           </section>
+
+          <Panel title="إدارة الوكلاء والمؤثرين (Influencer Links)" action={<Users size={18} />}>
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-xs text-[#94a3b8]">اسم القناة / المؤثر</span>
+                  <TextInput
+                    value={newInfluencer.name}
+                    onChange={(value) => setNewInfluencer((curr) => ({ ...curr, name: value }))}
+                    placeholder="مثال: قناة أبو فلان"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-[#94a3b8]">كود الرابط (أحرف/أرقام/شرطات فقط)</span>
+                  <TextInput
+                    value={newInfluencer.code}
+                    onChange={(value) => setNewInfluencer((curr) => ({ ...curr, code: value }))}
+                    placeholder="مثال: abofolan"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-xs text-[#94a3b8]">معرّف تليجرام للمؤثر (Telegram ID)</span>
+                  <TextInput
+                    value={newInfluencer.telegramId}
+                    onChange={(value) => setNewInfluencer((curr) => ({ ...curr, telegramId: value }))}
+                    placeholder="لإرسال الأرباح إلى حسابه بالبوت"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-[#94a3b8]">العمولة لكل تفعيل ناجح ($ USD)</span>
+                  <NumberInput
+                    value={newInfluencer.commissionUsd}
+                    onChange={(value) => setNewInfluencer((curr) => ({ ...curr, commissionUsd: value }))}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={createInfluencer}
+                className="w-full h-10 rounded-lg bg-[#d69a2d] hover:bg-[#b58224] text-sm font-black text-[#0b0d12] transition duration-200"
+              >
+                توليد رابط المؤثر
+              </button>
+
+              <div className="border-t border-[#242a36] pt-4 space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[#94a3b8]">الروابط الحالية للمؤثرين</h4>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {influencers.map((inf) => (
+                    <div key={inf.code} className="flex flex-col gap-2 rounded-lg border border-[#242a36] bg-[#0d1118] p-3 text-xs">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-bold text-white">{inf.name} ({inf.code})</p>
+                          <p className="text-[#a1a1aa] mt-0.5 font-mono select-all">
+                            t.me/rewards_tasks_demo_bot?start={inf.code}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteInfluencer(inf.code)}
+                          className="text-red-400 hover:text-red-300 font-bold"
+                        >
+                          حذف
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 pt-2 border-t border-[#242a36]/50 text-center text-[#94a3b8]">
+                        <div>
+                          <span className="block text-[10px] text-gray-500">العمولة</span>
+                          <span className="font-bold text-white">${inf.commission_usd}</span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] text-gray-500">النقرات</span>
+                          <span className="font-bold text-white">{inf.clicks}</span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] text-gray-500">المشترون</span>
+                          <span className="font-bold text-[#31d67b]">{inf.completions}</span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] text-gray-500">إجمالي الأرباح</span>
+                          <span className="font-bold text-[#d69a2d]">${inf.total_commission_paid_usd}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {influencers.length === 0 && (
+                    <p className="text-center text-gray-500 py-2">لا توجد روابط مؤثرين حالياً.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Panel>
 
           <Panel title="Task Management" action={<ListChecks size={18} />}>
             <div className="grid gap-3">
@@ -462,47 +635,68 @@ export function AdminDashboard({
           <section className="grid gap-5 xl:grid-cols-2">
             <Panel title="Real Users" action={<Users size={18} />}>
               <DataList
-                rows={userRows}
+                rows={[...userRows].sort((a, b) => {
+                  if (a.purchaseVerified && !b.purchaseVerified) return -1;
+                  if (!a.purchaseVerified && b.purchaseVerified) return 1;
+                  return b.balance - a.balance;
+                })}
                 empty="No real Telegram users yet."
-                render={(row) => (
-                  <div className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${
-                    row.frozen ? "border-red-500/20 bg-red-950/10" : "border-[#242a36] bg-[#0d1118]"
-                  }`}>
-                    <div className="min-w-0">
-                      <p className="truncate font-bold flex items-center gap-2">
-                        {row.name}
-                        {row.frozen && (
-                          <span className="rounded-full bg-red-950 px-2 py-0.5 text-[10px] font-bold text-red-400 border border-red-500/30">
-                            FROZEN
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-xs text-[#94a3b8]">Telegram ID: {row.telegramId}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right text-sm">
-                        <p className="font-black text-[#d69a2d]">{row.balance} OBSD</p>
-                        <p className="text-[10px] text-[#31d67b] font-bold">
-                          {row.miningCyclesCompleted || 0} cycles
-                        </p>
-                        <p className="text-xs text-[#94a3b8]">
-                          {row.purchaseVerified ? "Verified purchase" : "Purchase pending"}
+                render={(row) => {
+                  const isVerified = row.purchaseVerified;
+                  const borderBgClass = row.frozen
+                    ? "border-red-500/20 bg-red-950/10"
+                    : isVerified
+                    ? "border-emerald-500/40 bg-[#061510] shadow-[0_0_15px_rgba(16,185,129,0.06)]"
+                    : "border-[#242a36] bg-[#0d1118]";
+                  
+                  return (
+                    <div className={`flex items-center justify-between gap-3 rounded-lg border p-3 transition-all ${borderBgClass}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-bold flex flex-wrap items-center gap-2">
+                          <span className="text-white">{row.name}</span>
+                          {row.frozen && (
+                            <span className="rounded-full bg-red-950 px-2 py-0.5 text-[9px] font-bold text-red-400 border border-red-500/30">
+                              BANNED / محظور
+                            </span>
+                          )}
+                          {isVerified && (
+                            <span className="rounded-full bg-[#0b3a2c] px-2 py-0.5 text-[9px] font-bold text-[#31d67b] border border-[#10b981]/30">
+                              ✨ Verified Buyer / مشترٍ مؤكد
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#94a3b8] mt-1">Telegram ID: {row.telegramId}</p>
+                        <p className="text-[11px] text-gray-400 truncate mt-0.5">
+                          Wallet: <span className="font-mono text-[10px] text-gray-300">{row.walletAddress || "لم تربط بعد"}</span>
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleUserFreezeState(row.id, row.frozen)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
-                          row.frozen
-                            ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                            : "bg-[#242a36] text-gray-300 hover:bg-[#2d3646]"
-                        }`}
-                      >
-                        {row.frozen ? "Unfreeze" : "Freeze"}
-                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right text-xs">
+                          <p className="font-black text-[#d69a2d] text-sm">{row.balance} OBSD</p>
+                          <p className="text-[10px] text-[#31d67b] font-bold">
+                            {row.miningCyclesCompleted || 0} cycles
+                          </p>
+                          {isVerified && (
+                            <p className="text-[9px] text-emerald-400 font-bold mt-0.5">
+                              Reward: ${(settingsForm.baseRewardUsd || 1.00).toFixed(2)} USD
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleUserFreezeState(row.id, row.frozen)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+                            row.frozen
+                              ? "bg-[#0b3a2c] text-[#31d67b] hover:bg-[#125843]"
+                              : "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                          }`}
+                        >
+                          {row.frozen ? "Unban / إلغاء الحظر" : "Ban / حظر"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                }}
               />
             </Panel>
 

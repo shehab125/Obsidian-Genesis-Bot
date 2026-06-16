@@ -24,6 +24,8 @@ export type AppUser = {
   unlockAt?: string | null;
   miningCyclesCompleted: number;
   cooldownBypassed: boolean;
+  influencerCode?: string | null;
+  walletAddress?: string | null;
 };
 
 export type TelegramInitUser = {
@@ -69,6 +71,8 @@ export type AppSettings = {
   tokenContractAddress: string;
   quickswapLink: string;
   ownerWallet: string;
+  baseRewardUsd: number;
+  botActive: boolean;
 };
 
 export type ReviewSubmission = {

@@ -11,6 +11,8 @@ const settingsSchema = z.object({
   tokenContractAddress: z.string().optional().default(""),
   quickswapLink: z.string().optional().default(""),
   ownerWallet: z.string().optional().default(""),
+  baseRewardUsd: z.number().min(0),
+  botActive: z.boolean().optional().default(true),
 });
 
 export async function PATCH(request: Request) {

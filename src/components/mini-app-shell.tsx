@@ -275,6 +275,34 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
     scrollToTop();
   }
 
+  async function handleBypassReferrals(taskId: string) {
+    if (!sessionReady || !currentUser.id) {
+      setMessage("Open from Telegram first.");
+      return;
+    }
+    const response = await fetch("/api/tasks/referral/bypass", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: currentUser.id, taskId }),
+    });
+    const payload = await response.json();
+    setMessage(payload.message);
+    if (payload.ok) {
+      setTaskRows((rows) => {
+        const nextRows = rows.map((task) => (task.id === taskId ? { ...task, status: "completed" as const } : task));
+        setCurrentUser((current) => ({
+          ...current,
+          onboardingCompleted: true,
+        }));
+        return nextRows;
+      });
+      setTimeout(() => {
+        window.location.reload();
+      }, 800);
+    }
+    scrollToTop();
+  }
+
   const startSocialTimer = (taskId: string) => {
     if (claimTimers[taskId] !== undefined) return;
     setClaimTimers((prev) => ({ ...prev, [taskId]: 15 }));
@@ -394,6 +422,27 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
     scrollToTop();
   }
 
+   if (appSettings && appSettings.botActive === false) {
+    return (
+      <main className="min-h-screen bg-[#050505] text-[#f5f5f7] grid place-items-center p-6">
+        <div className="text-center space-y-6 max-w-sm rounded-[24px] border border-yellow-500/30 bg-[#0d0d0b] p-8 shadow-[0_0_50px_rgba(234,179,8,0.08)]">
+          <div className="mx-auto grid size-20 place-items-center rounded-full bg-yellow-500/10 text-yellow-500">
+            <svg xmlns="http://www.w3.org/2000/svg" className="size-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-black text-white">Maintenance Mode / صيانة مؤقتة</h1>
+          <p className="text-sm text-gray-400 leading-6">
+            النظام متوقف حالياً للصيانة والترقيات المؤقتة. سنعود للعمل قريباً جداً فور الانتهاء. شكراً لتفهمكم!
+          </p>
+          <p className="text-sm text-gray-400 leading-6">
+            The system is temporarily suspended for scheduled maintenance and upgrades. We will be back online shortly. Thank you for your patience!
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   if (currentUser.frozen) {
     return (
       <main className="min-h-screen bg-[#050505] text-[#f5f5f7] grid place-items-center p-6">
@@ -425,6 +474,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               message={message}
               verifyTelegramTask={verifyTelegramTask}
               verifyReferralTask={verifyReferralTask}
+              bypassReferralTask={handleBypassReferrals}
               claimSocialTask={claimSocialTask}
               claimTimers={claimTimers}
               startSocialTimer={startSocialTimer}
@@ -1000,7 +1050,7 @@ function MiningScreen({
             </div>
             <a
               href={`https://t.me/share/url?url=https://t.me/rewards_tasks_demo_bot?start=${user.telegramId}&text=${encodeURIComponent(
-                "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+                "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً!\nJoin the simple Obsidian mining bot and earn over $700 per month!"
               )}`}
               target="_blank"
               rel="noopener noreferrer"
@@ -1414,7 +1464,7 @@ function NodesScreen({ user }: { user: AppUser }) {
         {referralPath && (
           <a
             href={`https://t.me/share/url?url=https://${referralPath}&text=${encodeURIComponent(
-              "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+              "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً!\nJoin the simple Obsidian mining bot and earn over $700 per month!"
             )}`}
             target="_blank"
             rel="noopener noreferrer"
@@ -1629,6 +1679,7 @@ function OnboardingScreen({
   message,
   verifyTelegramTask,
   verifyReferralTask,
+  bypassReferralTask,
   claimSocialTask,
   claimTimers,
   startSocialTimer,
@@ -1640,6 +1691,7 @@ function OnboardingScreen({
   message: string;
   verifyTelegramTask: (taskId: string) => Promise<void>;
   verifyReferralTask: (taskId: string) => Promise<void>;
+  bypassReferralTask: (taskId: string) => Promise<void>;
   claimSocialTask: (taskId: string) => Promise<void>;
   claimTimers: Record<string, number>;
   startSocialTimer: (taskId: string) => void;
@@ -1723,14 +1775,9 @@ function OnboardingScreen({
                     </button>
                   </div>
                 ) : isReferral ? (
-                  <button
-                    type="button"
-                    onClick={() => verifyReferralTask(task.id)}
-                    disabled={!sessionReady}
-                    className="rounded-lg bg-[#211747] px-4 py-2 text-sm font-black text-white hover:bg-[#2d1f63]"
-                  >
-                    Verify
-                  </button>
+                  <span className="text-xs text-[#ff8a00] font-black shrink-0">
+                    لم تكتمل
+                  </span>
                 ) : (
                   <div className="flex gap-2 items-center">
                     {timerVal === undefined && task.url && (
@@ -1777,6 +1824,7 @@ function OnboardingScreen({
                     <input
                       readOnly
                       value={referralLink}
+                      placeholder="Open in Telegram to generate link"
                       className="flex-1 bg-[#050505] border border-[#23232a] rounded px-2 py-1 text-xs text-gray-300 outline-none"
                       onClick={(e) => (e.target as HTMLInputElement).select()}
                     />
@@ -1793,7 +1841,7 @@ function OnboardingScreen({
                   </div>
                   <a
                     href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(
-                      "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً! Join the simple Obsidian mining bot and earn over $700 per month!"
+                      "انضم إلى بوت تعدين أوبيسيديان البسيط وحقق أكثر من 700 دولار شهرياً!\nJoin the simple Obsidian mining bot and earn over $700 per month!"
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1801,6 +1849,26 @@ function OnboardingScreen({
                   >
                     Share on Telegram (مشاركة الرابط)
                   </a>
+                  
+                  {/* Action Buttons */}
+                  <div className="flex flex-col gap-2 pt-3 border-t border-[#23232a] mt-2">
+                    <button
+                      type="button"
+                      onClick={() => verifyReferralTask(task.id)}
+                      disabled={!sessionReady}
+                      className="w-full h-11 rounded-lg bg-[#211747] text-white hover:bg-[#2d1f63] font-black text-xs transition-colors"
+                    >
+                      [انضمام الإحالات]
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => bypassReferralTask(task.id)}
+                      disabled={!sessionReady}
+                      className="w-full h-11 rounded-lg bg-gradient-to-r from-[#8a2be2] to-[#ff007f] text-white font-black text-xs transition-all hover:opacity-90 flex items-center justify-center gap-2"
+                    >
+                      🚀 تخطي الدعوات والشراء فوراً
+                    </button>
+                  </div>
                 </div>
               )}
             </article>

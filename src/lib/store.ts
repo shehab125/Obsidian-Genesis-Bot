@@ -34,6 +34,7 @@ const emptyUser: AppUser = {
   unlockAt: null,
   miningCyclesCompleted: 0,
   cooldownBypassed: false,
+  walletAddress: null,
 };
 
 type DbUser = {
@@ -53,6 +54,8 @@ type DbUser = {
   unlock_at: string | null;
   mining_cycles_completed?: number;
   cooldown_bypassed?: boolean;
+  influencer_code?: string | null;
+  wallet_address?: string | null;
 };
 
 type DbTask = {
@@ -115,6 +118,8 @@ type DbSettings = {
   token_contract_address?: string;
   quickswap_link?: string;
   owner_wallet?: string;
+  base_reward_usd?: number;
+  bot_active?: boolean;
 };
 
 export async function getDashboardData() {
@@ -896,6 +901,8 @@ export async function updateAppSettings(input: AppSettings) {
       token_contract_address: input.tokenContractAddress,
       quickswap_link: input.quickswapLink,
       owner_wallet: input.ownerWallet,
+      base_reward_usd: input.baseRewardUsd,
+      bot_active: input.botActive,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" },
@@ -949,6 +956,10 @@ export async function verifyUserPurchase(userId: string) {
     return { ok: false, message: "المستخدم غير موجود." };
   }
 
+  if (user.purchaseVerified) {
+    return { ok: true, message: "تم التفعيل مسبقاً." };
+  }
+
   const settings = await getAppSettings();
   const lockDays = settings.withdrawalLockDays || 0;
 
@@ -959,24 +970,130 @@ export async function verifyUserPurchase(userId: string) {
     unlockAt = d.toISOString();
   }
 
-  const nextWithdrawable = user.withdrawableBalance + user.pendingBalance;
+  // 1. Fetch wallet address from approved verification requests
+  const { data: latestRequest } = await supabase
+    .from("purchase_verification_requests")
+    .select("wallet_address")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const walletAddress = latestRequest?.wallet_address || "";
+
+  // 2. Fetch actual hold balance on chain
+  let balance = 0;
+  if (walletAddress && settings.tokenContractAddress) {
+    try {
+      balance = await getErc20Balance(settings.tokenContractAddress, walletAddress);
+    } catch (err) {
+      console.error("Failed to fetch balance in verifyUserPurchase:", err);
+    }
+  }
+
+  // 3. Proportional reward calculation logic
+  const usdValue = balance * settings.tokenUsdPrice;
+  let rewardUsd = settings.baseRewardUsd; // default fallback if balance check fails or zero
+  if (usdValue >= settings.requiredPurchaseUsd && settings.requiredPurchaseUsd > 0) {
+    rewardUsd = (usdValue / settings.requiredPurchaseUsd) * settings.baseRewardUsd;
+  }
+  
+  const rewardTokens = Math.round(rewardUsd / (settings.tokenUsdPrice || 0.001));
+
+  // 4. Update user record (add proportional reward to balance and withdrawable)
+  const nextWithdrawable = user.withdrawableBalance + user.pendingBalance + rewardTokens;
+  const nextBalance = user.balance + rewardTokens;
+
   await supabase
     .from("app_users")
     .update({
       purchase_verified: true,
       purchase_verified_at: new Date().toISOString(),
+      balance: nextBalance,
       balance_pending: 0,
       balance_withdrawable: nextWithdrawable,
       unlock_at: unlockAt,
       cooldown_bypassed: true,
+      wallet_address: walletAddress || null,
     })
     .eq("id", userId);
+
+  // 5. Influencer Commission Logic
+  if (user.influencerCode) {
+    const { data: influencer } = await supabase
+      .from("influencer_links")
+      .select("*")
+      .eq("code", user.influencerCode)
+      .maybeSingle();
+
+    if (influencer && influencer.user_id) {
+      const commissionUsd = Number(influencer.commission_usd || 0.50);
+      const commissionTokens = Math.round(commissionUsd / (settings.tokenUsdPrice || 0.001));
+
+      if (commissionTokens > 0) {
+        // Fetch influencer user details
+        const { data: influencerUser } = await supabase
+          .from("app_users")
+          .select("balance, balance_withdrawable")
+          .eq("id", influencer.user_id)
+          .maybeSingle();
+
+        if (influencerUser) {
+          const nextInfBalance = (influencerUser.balance || 0) + commissionTokens;
+          const nextInfWithdrawable = (influencerUser.balance_withdrawable || 0) + commissionTokens;
+
+          // Credit influencer
+          await supabase
+            .from("app_users")
+            .update({
+              balance: nextInfBalance,
+              balance_withdrawable: nextInfWithdrawable,
+            })
+            .eq("id", influencer.user_id);
+
+          // Update influencer link statistics
+          await supabase
+            .from("influencer_links")
+            .update({
+              completions: (influencer.completions || 0) + 1,
+              total_commission_paid_usd: Number(influencer.total_commission_paid_usd || 0) + commissionUsd,
+            })
+            .eq("code", user.influencerCode);
+        }
+      }
+    }
+  }
+
+  // 6. Auto-start 1-hour mining session, resetting any active timer
+  try {
+    // Delete any active unclaimed session
+    await supabase
+      .from("mining_sessions")
+      .delete()
+      .eq("user_id", userId)
+      .eq("claimed", false);
+
+    // Start fresh 1-hour session
+    const durationMs = 1 * 60 * 60 * 1000; // 1 hour
+    const endsAt = new Date(Date.now() + durationMs).toISOString();
+    const miningRewardUsd = 0.20; // 2x verified reward
+    const miningRewardTokens = Number((miningRewardUsd / (settings.tokenUsdPrice || 0.001)).toFixed(6));
+
+    await supabase.from("mining_sessions").insert({
+      user_id: userId,
+      ends_at: endsAt,
+      reward_usd: miningRewardUsd,
+      reward_tokens: miningRewardTokens,
+    });
+  } catch (err) {
+    console.error("Auto-start mining failed:", err);
+  }
 
   return {
     ok: true,
     message: lockDays > 0
-      ? `تم تفعيل الشراء بنجاح. تم تعليق السحب مؤقتاً لمدة ${lockDays} أيام.`
-      : "تم تفعيل الرصيد القابل للسحب للمستخدم.",
+      ? `تم تفعيل الشراء بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تعليق السحب مؤقتاً لمدة ${lockDays} أيام وتصفير عداد التعدين لساعة جديدة.`
+      : `تم تفعيل الرصيد القابل للسحب بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تصفير عداد التعدين لساعة جديدة.`,
   };
 }
 
@@ -1044,6 +1161,7 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
   if (!existingUser) {
     // Determine if we have a referrer
     let referredById: string | null = null;
+    let influencerCode: string | null = null;
     if (referrerTelegramId && referrerTelegramId !== telegramId) {
       const { data: referrer } = await supabase
         .from("app_users")
@@ -1052,6 +1170,16 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
         .maybeSingle();
       if (referrer) {
         referredById = referrer.id;
+      } else {
+        // Check if referrerTelegramId matches an influencer code
+        const { data: influencer } = await supabase
+          .from("influencer_links")
+          .select("code")
+          .eq("code", referrerTelegramId.trim().toLowerCase())
+          .maybeSingle();
+        if (influencer) {
+          influencerCode = influencer.code;
+        }
       }
     }
 
@@ -1062,6 +1190,7 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
         username: telegramUser.username ?? null,
         display_name: displayName,
         referred_by: referredById,
+        influencer_code: influencerCode,
       })
       .select("*")
       .single();
@@ -1082,6 +1211,21 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
             .from("app_users")
             .update({ referral_count: (referrer.referral_count || 0) + 1 })
             .eq("id", referredById);
+        }
+      }
+
+      // Increment influencer's click/registration count
+      if (influencerCode) {
+        const { data: inf } = await supabase
+          .from("influencer_links")
+          .select("clicks")
+          .eq("code", influencerCode)
+          .maybeSingle();
+        if (inf) {
+          await supabase
+            .from("influencer_links")
+            .update({ clicks: (inf.clicks || 0) + 1 })
+            .eq("code", influencerCode);
         }
       }
     }
@@ -1111,6 +1255,24 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
     .eq("user_id", data.id);
 
   return mapUser(data as DbUser, count ?? 0);
+}
+
+export async function registerReferralFromTelegramBot(
+  telegramId: number,
+  firstName?: string,
+  lastName?: string,
+  username?: string,
+  referrerTelegramId?: string | null
+) {
+  return getOrCreateTelegramUser(
+    {
+      id: telegramId,
+      first_name: firstName,
+      last_name: lastName,
+      username: username,
+    },
+    referrerTelegramId
+  );
 }
 
 async function getUserById(userId: string) {
@@ -1298,6 +1460,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     tokenContractAddress: contractAddress,
     quickswapLink: settings.quickswap_link ?? "",
     ownerWallet: settings.owner_wallet ?? "",
+    baseRewardUsd: Number(settings.base_reward_usd ?? 1.00),
+    botActive: Boolean(settings.bot_active ?? true),
   };
 }
 
@@ -1416,6 +1580,8 @@ function mapUser(user: DbUser, completedTasks: number): AppUser {
     unlockAt: user.unlock_at,
     miningCyclesCompleted: user.mining_cycles_completed ?? 0,
     cooldownBypassed: user.cooldown_bypassed ?? false,
+    influencerCode: user.influencer_code,
+    walletAddress: user.wallet_address,
   };
 }
 
@@ -1496,7 +1662,7 @@ export async function startMiningSession(userId: string) {
   }
 
   if (user.miningCyclesCompleted > 0) {
-    if (user.referralCount < 3) {
+    if (!user.purchaseVerified && user.referralCount < 3) {
       return { ok: false, message: "يجب عليك دعوة 3 مستخدمين على الأقل لتفعيل دورات التعدين التالية." };
     }
     if (!user.purchaseVerified) {
@@ -2019,4 +2185,42 @@ export async function deleteTask(id: string) {
   }
 
   return { ok: true, message: "تم حذف المهمة بنجاح." };
+}
+
+export async function bypassReferralTask(userId: string, taskId: string) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return { ok: false, message: "قاعدة البيانات غير متصلة." };
+
+  const user = await getUserById(userId);
+  if (!user) return { ok: false, message: "المستخدم غير موجود." };
+
+  const { data: task } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task) return { ok: false, message: "المهمة غير موجودة." };
+
+  // Check if already completed
+  const { data: existing } = await supabase
+    .from("task_completions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("task_id", taskId)
+    .maybeSingle();
+
+  if (!existing) {
+    await supabase.from("task_completions").insert({
+      user_id: userId,
+      task_id: taskId,
+      reward: task.reward,
+    });
+    await awardRewardToUser(userId, task.reward);
+  }
+
+  // Update onboarding completed state directly
+  await supabase.from("app_users").update({ onboarding_completed: true }).eq("id", userId);
+
+  return { ok: true, message: "تم تخطي شرط الدعوات بنجاح. يمكنك الآن تفعيل محفظتك للشراء." };
 }

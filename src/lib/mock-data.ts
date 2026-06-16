@@ -35,6 +35,8 @@ export const appSettings = {
   tokenContractAddress: "0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f",
   quickswapLink: "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F",
   ownerWallet: "0x7167C08FD45021c68993057d73f3b35944682635",
+  baseRewardUsd: 1.00,
+  botActive: true,
 };
 
 export const tasks: Task[] = [

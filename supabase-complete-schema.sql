@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   unlock_at timestamptz,
   mining_cycles_completed integer NOT NULL DEFAULT 0,
   cooldown_bypassed boolean NOT NULL DEFAULT false,
+  influencer_code text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
   purchase_condition_enabled boolean NOT NULL DEFAULT true,
   token_usd_price numeric(12, 6) NOT NULL DEFAULT 0.001,
   withdrawal_lock_days integer NOT NULL DEFAULT 0,
+  base_reward_usd numeric(10, 2) NOT NULL DEFAULT 1.00,
   token_contract_address text NOT NULL DEFAULT '0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f',
   quickswap_link text NOT NULL DEFAULT 'https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F',
   owner_wallet text NOT NULL DEFAULT '0x7167C08FD45021c68993057d73f3b35944682635',
@@ -64,6 +66,7 @@ INSERT INTO app_settings (
   purchase_condition_enabled,
   token_usd_price,
   withdrawal_lock_days,
+  base_reward_usd,
   token_contract_address,
   quickswap_link,
   owner_wallet
@@ -75,6 +78,7 @@ VALUES (
   true, 
   0.001, 
   0, 
+  1.00,
   '0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f',
   'https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F',
   '0x7167C08FD45021c68993057d73f3b35944682635'
@@ -83,6 +87,18 @@ ON CONFLICT (id) DO UPDATE SET
   token_contract_address = EXCLUDED.token_contract_address,
   quickswap_link = EXCLUDED.quickswap_link,
   owner_wallet = EXCLUDED.owner_wallet;
+
+-- 3.5. Create influencer_links table
+CREATE TABLE IF NOT EXISTS influencer_links (
+  code text PRIMARY KEY,
+  name text NOT NULL,
+  user_id uuid REFERENCES app_users(id) ON DELETE CASCADE,
+  commission_usd numeric(10, 2) NOT NULL DEFAULT 0.50,
+  clicks integer NOT NULL DEFAULT 0,
+  completions integer NOT NULL DEFAULT 0,
+  total_commission_paid_usd numeric(12, 4) NOT NULL DEFAULT 0.00,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- 4. Create tasks table
 CREATE TABLE IF NOT EXISTS tasks (
@@ -198,7 +214,7 @@ SELECT 'Retweet Pinned Tweet', 'Retweet our pinned tweet on X to verify your nod
 WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE is_onboarding = true AND title = 'Retweet Pinned Tweet');
 
 INSERT INTO tasks (title, description, platform, target_url, reward, status, proof_required, is_onboarding)
-SELECT 'Invite 3 Friends', 'Invite 3 friends to complete onboarding. Your referral link is in the Nodes tab.', 'referral', '', 150, 'active', false, true
+SELECT 'Invite 3 Friends', 'Invite 3 friends to complete onboarding. Share your referral link below.', 'referral', '', 150, 'active', false, true
 WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE is_onboarding = true AND platform = 'referral');
 
 -- 14. Seed Social Media Tasks (Phase 2 - 0.1$ reward each)

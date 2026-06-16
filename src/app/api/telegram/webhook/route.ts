@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppSettings, registerReferralFromTelegramBot } from "@/lib/store";
 
 type TelegramMessage = {
   chat?: {
@@ -6,7 +7,10 @@ type TelegramMessage = {
   };
   text?: string;
   from?: {
+    id: number;
     first_name?: string;
+    last_name?: string;
+    username?: string;
   };
 };
 
@@ -22,10 +26,53 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // 1. Fetch settings and check if bot is active (Kill Switch check)
+  let settings;
+  try {
+    settings = await getAppSettings();
+  } catch (err) {
+    console.error("Failed to fetch settings in webhook:", err);
+    return NextResponse.json({ ok: true });
+  }
+
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!settings.botActive) {
+    if (botToken) {
+      const maintenanceText = `⚠️ <b>عذراً، البوت متوقف حالياً للصيانة والترقيات المؤقتة.</b>\n\nيرجى المحاولة لاحقاً بعد قليل. شكراً لتفهمكم!\n\n⚠️ <b>The bot is temporarily suspended for maintenance and upgrades.</b>\n\nPlease check back later. Thank you for your patience!`;
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: message.chat.id,
+          text: maintenanceText,
+          parse_mode: "HTML",
+        }),
+      });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   const text = message.text ?? "";
   if (text.startsWith("/start")) {
     const parts = text.split(" ");
     const referrerId = parts.length > 1 ? parts[1].trim() : null;
+
+    // 2. Register referral immediately upon /start to count invites instantly!
+    if (message.from?.id) {
+      try {
+        await registerReferralFromTelegramBot(
+          message.from.id,
+          message.from.first_name,
+          message.from.last_name,
+          message.from.username,
+          referrerId
+        );
+      } catch (err) {
+        console.error("Failed to register referral instantly in webhook:", err);
+      }
+    }
+
     await sendStartMessage(
       message.chat.id,
       message.from?.first_name,
