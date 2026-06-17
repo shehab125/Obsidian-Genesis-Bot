@@ -57,6 +57,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
   const [withdrawAmount, setWithdrawAmount] = useState(String(settings.minimumWithdrawalPoints));
   const [walletAddress, setWalletAddress] = useState("");
   const [purchaseProofUrl, setPurchaseProofUrl] = useState("");
+  const [contractsCount, setContractsCount] = useState<number>(1);
   const scrollRef = useRef<HTMLElement | null>(null);
 
   const [activeMiningSession, setActiveMiningSession] = useState<{
@@ -394,6 +395,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
         body: JSON.stringify({
           userId: currentUser.id,
           walletAddress: walletAddress.trim(),
+          contractsCount: contractsCount,
         }),
       });
       const payload = await response.json();
@@ -522,6 +524,8 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               setWalletAddress={setWalletAddress}
               submitPurchaseVerification={submitPurchaseVerification}
               settings={appSettings}
+              contractsCount={contractsCount}
+              setContractsCount={setContractsCount}
             />
           )}
           {activeTab === "wallet" && (
@@ -540,6 +544,8 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               requestWithdrawal={requestWithdrawal}
               submitPurchaseVerification={submitPurchaseVerification}
               changeTab={changeTab}
+              contractsCount={contractsCount}
+              setContractsCount={setContractsCount}
             />
           )}
           {activeTab === "nodes" && <NodesScreen user={currentUser} />}
@@ -617,35 +623,20 @@ function HomeScreen({
         </section>
       )}
 
-      {!isMiningLocked && referralCount < 3 && allSocialTasksDone && (
+      {!isMiningLocked && !purchaseVerified && allSocialTasksDone && (
         <section className="mt-8 rounded-[20px] border border-[#ff8a00]/30 bg-[#ff8a00]/5 p-5 text-center shadow-[0_0_30px_rgba(255,138,0,0.05)]">
-          <p className="text-sm font-black text-[#ff8a00]">👥 On to the Next Step / الخطوة التالية</p>
+          <p className="text-sm font-black text-[#ff8a00]">🚀 On to the Next Step / الخطوة التالية</p>
           <p className="mt-2 text-xs text-gray-400 leading-relaxed">
-            لقد أتممت مهام السوشيال ميديا! لدخول خطوة التفعيل بالشراء والحصول على المكافأة المضاعفة، يرجى دعوة 3 أصدقاء أولاً.
+            لقد أتممت مهام السوشيال ميديا! يرجى تفعيل حسابك عن طريق التحقق من شراء وحيازة الرموز لتفعيل المكافأة وسحب الأرباح.
           </p>
           <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
-            You completed social tasks! To unlock the token hold verification step and double your rewards, please invite 3 friends first.
-          </p>
-          <button
-            onClick={() => changeTab("nodes")}
-            className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d87500] text-xs font-black text-white rounded-xl transition duration-200 animate-pulse"
-          >
-            Invite Friends (دعوة الأصدقاء)
-          </button>
-        </section>
-      )}
-
-      {!isMiningLocked && referralCount >= 3 && !purchaseVerified && allSocialTasksDone && (
-        <section className="mt-8 rounded-[20px] border border-[#ff8a00]/30 bg-[#ff8a00]/5 p-5 text-center shadow-[0_0_30px_rgba(255,138,0,0.05)]">
-          <p className="text-sm font-black text-[#ff8a00]">🚀 Social Tasks & Referrals Complete!</p>
-          <p className="mt-2 text-xs text-gray-400 leading-relaxed">
-            To start your next mining cycle, activate your 2x boost, and enable withdrawals, please buy $5-$10 of OBSD on QuickSwap and submit verification in the Wallet tab.
+            You completed social tasks! Please activate your account by verifying your token purchase/hold to enable your multiplier and withdraw.
           </p>
           <button
             onClick={() => changeTab("wallet")}
             className="mt-4 px-5 py-2.5 bg-[#ff8a00] hover:bg-[#d87500] text-xs font-black text-white rounded-xl transition duration-200 animate-pulse"
           >
-            Go Verify Purchase
+            Go Verify Purchase (الذهاب للتحقق والشراء)
           </button>
         </section>
       )}
@@ -877,6 +868,8 @@ function MiningScreen({
   setWalletAddress,
   submitPurchaseVerification,
   settings,
+  contractsCount,
+  setContractsCount,
 }: {
   user: AppUser;
   activeSession: any;
@@ -889,6 +882,8 @@ function MiningScreen({
   setWalletAddress: (val: string) => void;
   submitPurchaseVerification: () => Promise<void>;
   settings: AppSettings;
+  contractsCount: number;
+  setContractsCount: (val: number) => void;
 }) {
   const [timeLeft, setTimeLeft] = useState<string | null>(null);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState<string | null>(null);
@@ -960,10 +955,10 @@ function MiningScreen({
     };
   }, [activeSession, lastSessionStart, user.purchaseVerified]);
 
-  const isReferralLocked = user.miningCyclesCompleted > 0 && user.referralCount < 3;
-  const isPurchaseLocked = user.miningCyclesCompleted > 0 && user.referralCount >= 3 && !user.purchaseVerified;
+  const isReferralLocked = false;
+  const isPurchaseLocked = user.miningCyclesCompleted > 0 && !user.purchaseVerified;
   const isMiningLocked = isReferralLocked || isPurchaseLocked;
-  const boostMultiplier = user.purchaseVerified ? 2 : 1;
+  const boostMultiplier = user.boostMultiplier || (user.purchaseVerified ? 2.0 : 1.0);
   const velocity = (boostMultiplier * 0.10) / (tokenUsdPrice || 0.001);
   const usdAccrued = accrued * tokenUsdPrice;
 
@@ -1060,32 +1055,69 @@ function MiningScreen({
             </a>
           </div>
         </section>
+
       ) : isPurchaseLocked ? (
         <section className="mt-8 rounded-[24px] border border-[#ff8a00]/30 bg-[#0c0a05] p-6 space-y-6">
           <div className="text-center space-y-2">
             <div className="mx-auto grid size-16 place-items-center rounded-full bg-[#ff8a00]/10 text-[#ff8a00] text-3xl">
               🔒
             </div>
-            <h2 className="text-xl font-black text-white">Ecosystem Verification Locked</h2>
-            <p className="text-xs text-gray-400 leading-relaxed px-2">
-              You completed your first mining cycle! To prevent sybil accounts and unlock infinite daily cycles and withdrawals, you must verify your OBSD token hold.
+            <h2 className="text-xl font-black text-white">تفعيل عقد تعدين أوبيسيديان</h2>
+            <h3 className="text-xs font-black text-gray-300 uppercase tracking-wider">Activate Mining Contract</h3>
+            <p className="text-[12px] text-gray-400 leading-relaxed px-2">
+              سعر العقد الواحد هو <span className="text-white font-bold">${settings.requiredPurchaseUsd} USD</span> ومكافأته <span className="text-[#31d67b] font-bold">${settings.baseRewardUsd} USD</span> مع قفل سحب لمدة <span className="text-[#ff8a00] font-bold">{settings.withdrawalLockDays} أيام</span>. يرجى اختيار عدد العقود التي تريد تفعيلها.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-[#121216] border border-[#23232a] text-center">
-            <div>
-              <p className="text-[10px] uppercase font-bold text-gray-500">Required Hold</p>
-              <p className="text-lg font-black text-[#ff8a00] mt-1">${settings.requiredPurchaseUsd.toFixed(2)} USD</p>
-              <p className="text-[9px] text-gray-400 mt-0.5">
-                (~{((settings.requiredPurchaseUsd) / (tokenUsdPrice || 0.001)).toFixed(2)} OBSD)
-              </p>
+          {/* Contract Selector */}
+          <div className="space-y-3">
+            <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
+            <div className="grid grid-cols-5 gap-2">
+              {[1, 2, 5, 10, 20].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  onClick={() => setContractsCount(num)}
+                  className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                    contractsCount === num
+                      ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                      : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                  }`}
+                >
+                  {num} {num === 1 ? "عقد" : "عقود"}
+                </button>
+              ))}
             </div>
-            <div>
-              <p className="text-[10px] uppercase font-bold text-gray-500">Withdrawal Lock</p>
-              <p className="text-lg font-black text-[#ff8a00] mt-1">
-                {settings.withdrawalLockDays || 0} {settings.withdrawalLockDays === 1 ? "Day" : "Days"}
-              </p>
-              <p className="text-[9px] text-gray-400 mt-0.5">Security Hold Period</p>
+
+            {/* Custom Input */}
+            <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
+              <span className="text-xs text-gray-400 font-bold">عدد مخصص / Custom:</span>
+              <input
+                type="number"
+                min="1"
+                value={contractsCount}
+                onChange={(e) => setContractsCount(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
+              />
+            </div>
+
+            {/* Price & Reward Estimation Card */}
+            <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
+              <div className="flex justify-between items-center">
+                <span className="font-mono text-white font-black">${(contractsCount * settings.requiredPurchaseUsd).toFixed(2)} USD</span>
+                <span className="text-gray-400">القيمة المطلوبة / Total Cost:</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-mono text-[#31d67b] font-black">+${(contractsCount * settings.baseRewardUsd).toFixed(2)} USD</span>
+                <span className="text-gray-400">إجمالي مكافأة التفعيل / Total Reward:</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="font-mono text-[#ff8a00] font-black">{settings.withdrawalLockDays} يوم / Days</span>
+                <span className="text-gray-400">مدة الاحتفاظ بالعقد / Hold Duration:</span>
+              </div>
+              <div className="pt-2 border-t border-[#23232a] text-center font-mono text-[10px] text-gray-500">
+                {`~${((contractsCount * settings.requiredPurchaseUsd) / (tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
+              </div>
             </div>
           </div>
 
@@ -1238,6 +1270,8 @@ function WalletScreen({
   requestWithdrawal,
   submitPurchaseVerification,
   changeTab,
+  contractsCount,
+  setContractsCount,
 }: {
   user: AppUser;
   settings: AppSettings;
@@ -1253,8 +1287,10 @@ function WalletScreen({
   requestWithdrawal: () => Promise<void>;
   submitPurchaseVerification: () => Promise<void>;
   changeTab: (tab: any) => void;
+  contractsCount: number;
+  setContractsCount: (val: number) => void;
 }) {
-  const referralLocked = settings.purchaseConditionEnabled && user.miningCyclesCompleted > 0 && user.referralCount < 3;
+  const referralLocked = false;
   const locked = settings.purchaseConditionEnabled && !user.purchaseVerified;
   const usdBalance = balance * settings.tokenUsdPrice;
 
@@ -1358,19 +1394,84 @@ function WalletScreen({
               }
             />
             {locked && (
-              <div className="mt-4 p-4 rounded-[12px] bg-[#120c02] border border-[#ff8a00]/30 text-xs text-gray-300">
-                <p className="font-bold text-[#ff8a00] mb-1">Need OBSD tokens to unlock?</p>
-                <p className="mb-3 text-gray-400 font-medium">
-                  You can swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
-                </p>
-                <a
-                  href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center px-4 h-9 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors"
-                >
-                  Buy OBSD on QuickSwap
-                </a>
+              <div className="space-y-4 mt-4">
+                <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+                  <div>
+                    <p className="font-bold text-[#ff8a00] text-right">تفعيل عقد تعدين أوبيسيديان / Activate Contract</p>
+                    <p className="text-[11px] text-gray-400 mt-1 leading-normal text-right">
+                      سعر العقد الواحد هو <strong>${settings.requiredPurchaseUsd} USD</strong> ومكافأته <strong>${settings.baseRewardUsd} USD</strong> مع قفل سحب لمدة <strong>{settings.withdrawalLockDays} أيام</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Contract Selector */}
+                <div className="space-y-3">
+                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[1, 2, 5, 10, 20].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setContractsCount(num)}
+                        className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                          contractsCount === num
+                            ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                            : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                        }`}
+                      >
+                        {num} {num === 1 ? "عقد" : "عقود"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Input */}
+                  <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
+                    <span className="text-xs text-gray-400 font-bold">عدد مخصص / Custom:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={contractsCount}
+                      onChange={(e) => setContractsCount(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
+                    />
+                  </div>
+
+                  {/* Price & Reward Estimation Card */}
+                  <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-white font-black">${(contractsCount * settings.requiredPurchaseUsd).toFixed(2)} USD</span>
+                      <span className="text-gray-400">القيمة المطلوبة / Total Cost:</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-[#31d67b] font-black">+${(contractsCount * settings.baseRewardUsd).toFixed(2)} USD</span>
+                      <span className="text-gray-400">إجمالي مكافأة التفعيل / Total Reward:</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-[#ff8a00] font-black">{settings.withdrawalLockDays} يوم / Days</span>
+                      <span className="text-gray-400">مدة الاحتفاظ بالعقد / Hold Duration:</span>
+                    </div>
+                    <div className="pt-2 border-t border-[#23232a] text-center font-mono text-[10px] text-gray-500">
+                      {`~${((contractsCount * settings.requiredPurchaseUsd) / (settings.tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+                  <div>
+                    <p className="font-bold text-[#ff8a00]">Need OBSD tokens to unlock?</p>
+                    <p className="text-[11px] text-gray-400 mt-1 leading-normal text-right">
+                      Swap POL/ETH for OBSD directly on QuickSwap. Once you hold the tokens, enter your wallet below to verify automatically.
+                    </p>
+                  </div>
+                  <a
+                    href={settings.quickswapLink || "https://dapp.quickswap.exchange/swap?type=best&from=ETH&to=0x2a2C206aC686eDD7D5b8Cf1cf325dE5261cD446F"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex w-full items-center justify-center h-10 rounded-lg bg-[#ff8a00] hover:bg-[#e07b00] text-black font-black text-xs transition-colors text-center"
+                  >
+                    Buy OBSD on QuickSwap
+                  </a>
+                </div>
               </div>
             )}
           </section>
@@ -1856,17 +1957,9 @@ function OnboardingScreen({
                       type="button"
                       onClick={() => verifyReferralTask(task.id)}
                       disabled={!sessionReady}
-                      className="w-full h-11 rounded-lg bg-[#211747] text-white hover:bg-[#2d1f63] font-black text-xs transition-colors"
+                      className="w-full h-11 rounded-lg bg-gradient-to-r from-[#10b981] to-[#059669] text-white hover:opacity-90 font-black text-xs transition-opacity flex items-center justify-center gap-2"
                     >
-                      [انضمام الإحالات]
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => bypassReferralTask(task.id)}
-                      disabled={!sessionReady}
-                      className="w-full h-11 rounded-lg bg-gradient-to-r from-[#8a2be2] to-[#ff007f] text-white font-black text-xs transition-all hover:opacity-90 flex items-center justify-center gap-2"
-                    >
-                      🚀 تخطي الدعوات والشراء فوراً
+                      ✅ تفعيل ومتابعة الخطوة التالية / Proceed to next step
                     </button>
                   </div>
                 </div>

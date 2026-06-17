@@ -56,6 +56,7 @@ type DbUser = {
   cooldown_bypassed?: boolean;
   influencer_code?: string | null;
   wallet_address?: string | null;
+  boost_multiplier?: number;
 };
 
 type DbTask = {
@@ -120,6 +121,7 @@ type DbSettings = {
   owner_wallet?: string;
   base_reward_usd?: number;
   bot_active?: boolean;
+  purchase_plans?: any;
 };
 
 export async function getDashboardData() {
@@ -635,7 +637,7 @@ async function getErc20Balance(tokenAddress: string, walletAddress: string, deci
   return 0;
 }
 
-export async function verifyUserPurchaseAutomatic(userId: string, walletAddress: string) {
+export async function verifyUserPurchaseAutomatic(userId: string, walletAddress: string, contractsCount: number = 1) {
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return { ok: false, message: "قاعدة البيانات غير متصلة." };
@@ -676,11 +678,12 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
   // 2. Fetch balance
   const balance = await getErc20Balance(contractAddress, walletAddress);
   const usdValue = balance * settings.tokenUsdPrice;
+  const requiredUsd = contractsCount * settings.requiredPurchaseUsd;
 
-  if (usdValue < settings.requiredPurchaseUsd) {
+  if (usdValue < requiredUsd) {
     return {
       ok: false,
-      message: `لم نجد رصيد كافٍ من العملة في محفظتك. رصيدك الحالي: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). القيمة المطلوبة لتفعيل الحساب هي $${settings.requiredPurchaseUsd.toFixed(2)} USD. يرجى الشراء من QuickSwap وإعادة المحاولة.`
+      message: `لم نجد رصيد كافٍ من العملة في محفظتك لتفعيل عدد ${contractsCount} عقود. رصيدك الحالي: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). القيمة المطلوبة لتفعيل ${contractsCount} عقود هي $${requiredUsd.toFixed(2)} USD. يرجى الشراء من QuickSwap وإعادة المحاولة.`
     };
   }
 
@@ -689,7 +692,7 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
   await supabase.from("purchase_verification_requests").insert({
     user_id: userId,
     wallet_address: cleanWalletAddress,
-    proof_url: "Automatic Web3 Verification",
+    proof_url: "Contracts: " + contractsCount,
     status: "approved",
     reviewed_at: new Date().toISOString()
   });
@@ -702,7 +705,7 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
 
   return {
     ok: true,
-    message: `تهانينا! تم التحقق من محفظتك وتفعيل حسابك تلقائياً بنجاح! رصيدك: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). تم تفعيل مضاعف السرعة 2x وتفعيل السحب وبدء دورة تعدين جديدة.`,
+    message: `تهانينا! تم التحقق من محفظتك وتفعيل عدد ${contractsCount} عقود بنجاح! رصيدك: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). تم تفعيل مضاعف التعدين، السحب وبدء دورة تعدين جديدة.`,
   };
 }
 
@@ -890,29 +893,40 @@ export async function updateAppSettings(input: AppSettings) {
     return { ok: false, message: "قاعدة البيانات غير متصلة." };
   }
 
-  const { error } = await supabase.from("app_settings").upsert(
-    {
-      id: true,
-      minimum_withdrawal_points: input.minimumWithdrawalPoints,
-      required_purchase_usd: input.requiredPurchaseUsd,
-      purchase_condition_enabled: input.purchaseConditionEnabled,
-      token_usd_price: input.tokenUsdPrice,
-      withdrawal_lock_days: input.withdrawalLockDays,
-      token_contract_address: input.tokenContractAddress,
-      quickswap_link: input.quickswapLink,
-      owner_wallet: input.ownerWallet,
-      base_reward_usd: input.baseRewardUsd,
-      bot_active: input.botActive,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "id" },
-  );
+  let updateObj: any = {
+    id: true,
+    minimum_withdrawal_points: input.minimumWithdrawalPoints,
+    required_purchase_usd: input.requiredPurchaseUsd,
+    purchase_condition_enabled: input.purchaseConditionEnabled,
+    token_usd_price: input.tokenUsdPrice,
+    withdrawal_lock_days: input.withdrawalLockDays,
+    token_contract_address: input.tokenContractAddress,
+    quickswap_link: input.quickswapLink,
+    owner_wallet: input.ownerWallet,
+    base_reward_usd: input.baseRewardUsd,
+    bot_active: input.botActive,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (input.purchasePlans) {
+    updateObj.purchase_plans = input.purchasePlans;
+  }
+
+  const { error } = await supabase.from("app_settings").upsert(updateObj, { onConflict: "id" });
 
   if (error) {
+    if (error.message.includes("purchase_plans") || error.code === "P0002" || error.message.includes("does not exist")) {
+      delete updateObj.purchase_plans;
+      const { error: retryError } = await supabase.from("app_settings").upsert(updateObj, { onConflict: "id" });
+      if (retryError) {
+        return { ok: false, message: "تعذر تحديث الإعدادات: " + retryError.message };
+      }
+      return { ok: true, message: "تم تحديث الإعدادات (لكن يرجى تشغيل أمر الهجرة SQL لإتاحة ميزة خطط الشراء)." };
+    }
     return { ok: false, message: "تعذر تحديث الإعدادات: " + error.message };
   }
 
-  return { ok: true, message: "تم تحديث إعدادات السحب والشراء والتعليق." };
+  return { ok: true, message: "تم تحديث إعدادات السحب والشراء والتعليق والخطط." };
 }
 
 export async function updatePurchaseVerificationStatus(id: string, status: ReviewStatus) {
@@ -961,25 +975,21 @@ export async function verifyUserPurchase(userId: string) {
   }
 
   const settings = await getAppSettings();
-  const lockDays = settings.withdrawalLockDays || 0;
-
-  let unlockAt: string | null = null;
-  if (lockDays > 0) {
-    const d = new Date();
-    d.setDate(d.getDate() + lockDays);
-    unlockAt = d.toISOString();
-  }
 
   // 1. Fetch wallet address from approved verification requests
   const { data: latestRequest } = await supabase
     .from("purchase_verification_requests")
-    .select("wallet_address")
+    .select("wallet_address, proof_url")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   const walletAddress = latestRequest?.wallet_address || "";
+  let contractsCount = 1;
+  if (latestRequest?.proof_url && latestRequest.proof_url.startsWith("Contracts: ")) {
+    contractsCount = parseInt(latestRequest.proof_url.replace("Contracts: ", ""), 10) || 1;
+  }
 
   // 2. Fetch actual hold balance on chain
   let balance = 0;
@@ -991,32 +1001,53 @@ export async function verifyUserPurchase(userId: string) {
     }
   }
 
-  // 3. Proportional reward calculation logic
-  const usdValue = balance * settings.tokenUsdPrice;
-  let rewardUsd = settings.baseRewardUsd; // default fallback if balance check fails or zero
-  if (usdValue >= settings.requiredPurchaseUsd && settings.requiredPurchaseUsd > 0) {
-    rewardUsd = (usdValue / settings.requiredPurchaseUsd) * settings.baseRewardUsd;
+  // 3. Contract scaling logic
+  const nextBoostMultiplier = Number((contractsCount * 2.00).toFixed(2));
+  const computedLockDays = settings.withdrawalLockDays || 0;
+
+  let unlockAt: string | null = null;
+  if (computedLockDays > 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + computedLockDays);
+    unlockAt = d.toISOString();
   }
-  
+
+  const rewardUsd = contractsCount * settings.baseRewardUsd;
   const rewardTokens = Math.round(rewardUsd / (settings.tokenUsdPrice || 0.001));
 
   // 4. Update user record (add proportional reward to balance and withdrawable)
   const nextWithdrawable = user.withdrawableBalance + user.pendingBalance + rewardTokens;
   const nextBalance = user.balance + rewardTokens;
 
-  await supabase
+  const userUpdateObj: any = {
+    purchase_verified: true,
+    purchase_verified_at: new Date().toISOString(),
+    balance: nextBalance,
+    balance_pending: 0,
+    balance_withdrawable: nextWithdrawable,
+    unlock_at: unlockAt,
+    cooldown_bypassed: true,
+    wallet_address: walletAddress || null,
+  };
+
+  userUpdateObj.boost_multiplier = nextBoostMultiplier;
+
+  const { error: userUpdateError } = await supabase
     .from("app_users")
-    .update({
-      purchase_verified: true,
-      purchase_verified_at: new Date().toISOString(),
-      balance: nextBalance,
-      balance_pending: 0,
-      balance_withdrawable: nextWithdrawable,
-      unlock_at: unlockAt,
-      cooldown_bypassed: true,
-      wallet_address: walletAddress || null,
-    })
+    .update(userUpdateObj)
     .eq("id", userId);
+
+  if (userUpdateError) {
+    if (userUpdateError.message.includes("boost_multiplier") || userUpdateError.message.includes("does not exist")) {
+      delete userUpdateObj.boost_multiplier;
+      await supabase
+        .from("app_users")
+        .update(userUpdateObj)
+        .eq("id", userId);
+    } else {
+      return { ok: false, message: "تعذر تحديث رصيد المستخدم: " + userUpdateError.message };
+    }
+  }
 
   // 5. Influencer Commission Logic
   if (user.influencerCode) {
@@ -1031,7 +1062,6 @@ export async function verifyUserPurchase(userId: string) {
       const commissionTokens = Math.round(commissionUsd / (settings.tokenUsdPrice || 0.001));
 
       if (commissionTokens > 0) {
-        // Fetch influencer user details
         const { data: influencerUser } = await supabase
           .from("app_users")
           .select("balance, balance_withdrawable")
@@ -1042,7 +1072,6 @@ export async function verifyUserPurchase(userId: string) {
           const nextInfBalance = (influencerUser.balance || 0) + commissionTokens;
           const nextInfWithdrawable = (influencerUser.balance_withdrawable || 0) + commissionTokens;
 
-          // Credit influencer
           await supabase
             .from("app_users")
             .update({
@@ -1051,7 +1080,6 @@ export async function verifyUserPurchase(userId: string) {
             })
             .eq("id", influencer.user_id);
 
-          // Update influencer link statistics
           await supabase
             .from("influencer_links")
             .update({
@@ -1066,17 +1094,15 @@ export async function verifyUserPurchase(userId: string) {
 
   // 6. Auto-start 1-hour mining session, resetting any active timer
   try {
-    // Delete any active unclaimed session
     await supabase
       .from("mining_sessions")
       .delete()
       .eq("user_id", userId)
       .eq("claimed", false);
 
-    // Start fresh 1-hour session
     const durationMs = 1 * 60 * 60 * 1000; // 1 hour
     const endsAt = new Date(Date.now() + durationMs).toISOString();
-    const miningRewardUsd = 0.20; // 2x verified reward
+    const miningRewardUsd = 0.10 * nextBoostMultiplier;
     const miningRewardTokens = Number((miningRewardUsd / (settings.tokenUsdPrice || 0.001)).toFixed(6));
 
     await supabase.from("mining_sessions").insert({
@@ -1091,9 +1117,9 @@ export async function verifyUserPurchase(userId: string) {
 
   return {
     ok: true,
-    message: lockDays > 0
-      ? `تم تفعيل الشراء بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تعليق السحب مؤقتاً لمدة ${lockDays} أيام وتصفير عداد التعدين لساعة جديدة.`
-      : `تم تفعيل الرصيد القابل للسحب بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تصفير عداد التعدين لساعة جديدة.`,
+    message: computedLockDays > 0
+      ? `تم تفعيل الشراء بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تعليق السحب مؤقتاً لمدة ${computedLockDays} أيام وتصفير عداد التعدين لساعة جديدة (بمضاعف سرعة قدره ${nextBoostMultiplier}x).`
+      : `تم تفعيل الرصيد القابل للسحب بنجاح ومكافأة قدرها ${rewardTokens} OBSD. تم تصفير عداد التعدين لساعة جديدة (بمضاعف سرعة قدره ${nextBoostMultiplier}x).`,
   };
 }
 
@@ -1198,19 +1224,45 @@ async function getOrCreateTelegramUser(telegramUser: TelegramInitUser, referrerT
     if (!error && newUser) {
       data = newUser;
       
-      // Increment referrer's referral_count immediately upon registration to prevent onboarding deadlock
+      // Increment referrer's referral_count immediately and award referral points (100 OBSD) instantly!
       if (referredById) {
         const { data: referrer } = await supabase
           .from("app_users")
-          .select("referral_count")
+          .select("referral_count, balance, balance_pending, balance_withdrawable, purchase_verified")
           .eq("id", referredById)
           .maybeSingle();
 
         if (referrer) {
+          const newReferralCount = (referrer.referral_count || 0) + 1;
+          const inviteReward = 100;
+          const settings = await getAppSettings();
+          const nextBalance = referrer.balance + inviteReward;
+          
+          const isVerified = referrer.purchase_verified ?? false;
+          const nextPending = settings.purchaseConditionEnabled && !isVerified
+            ? (referrer.balance_pending ?? 0) + inviteReward
+            : (referrer.balance_pending ?? 0);
+            
+          const nextWithdrawable = settings.purchaseConditionEnabled && !isVerified
+            ? (referrer.balance_withdrawable ?? referrer.balance)
+            : (referrer.balance_withdrawable ?? referrer.balance) + inviteReward;
+
           await supabase
             .from("app_users")
-            .update({ referral_count: (referrer.referral_count || 0) + 1 })
+            .update({
+              referral_count: newReferralCount,
+              balance: nextBalance,
+              balance_pending: nextPending,
+              balance_withdrawable: nextWithdrawable,
+            })
             .eq("id", referredById);
+
+          // Log in referral_rewards
+          await supabase.from("referral_rewards").insert({
+            referrer_id: referredById,
+            referred_user_id: newUser.id,
+            amount: inviteReward,
+          });
         }
       }
 
@@ -1462,6 +1514,14 @@ export async function getAppSettings(): Promise<AppSettings> {
     ownerWallet: settings.owner_wallet ?? "",
     baseRewardUsd: Number(settings.base_reward_usd ?? 1.00),
     botActive: Boolean(settings.bot_active ?? true),
+    purchasePlans: (settings.purchase_plans ? (typeof settings.purchase_plans === 'string' ? JSON.parse(settings.purchase_plans) : settings.purchase_plans) : [
+      { minPurchase: 3, lockDays: 1, multiplier: 2.0 },
+      { minPurchase: 5, lockDays: 5, multiplier: 3.0 }
+    ]).map((p: any) => ({
+      minPurchase: Number(p.minPurchase ?? p.min_purchase ?? 0),
+      lockDays: Number(p.lockDays ?? p.lock_days ?? 0),
+      multiplier: Number(p.multiplier ?? p.boost_multiplier ?? 1.00),
+    })),
   };
 }
 
@@ -1582,6 +1642,7 @@ function mapUser(user: DbUser, completedTasks: number): AppUser {
     cooldownBypassed: user.cooldown_bypassed ?? false,
     influencerCode: user.influencer_code,
     walletAddress: user.wallet_address,
+    boostMultiplier: Number(user.boost_multiplier ?? 1.00),
   };
 }
 
@@ -1662,9 +1723,6 @@ export async function startMiningSession(userId: string) {
   }
 
   if (user.miningCyclesCompleted > 0) {
-    if (!user.purchaseVerified && user.referralCount < 3) {
-      return { ok: false, message: "يجب عليك دعوة 3 مستخدمين على الأقل لتفعيل دورات التعدين التالية." };
-    }
     if (!user.purchaseVerified) {
       return { ok: false, message: "يجب عليك تفعيل التعدين بالتحقق من شراء الرموز أولاً." };
     }
@@ -1706,10 +1764,8 @@ export async function startMiningSession(userId: string) {
   const settings = await getAppSettings();
   const price = settings.tokenUsdPrice || 0.001;
 
-  // Reward calculation:
-  // If purchaseVerified is true -> multiplier is 2x -> reward is $0.20
-  // If purchaseVerified is false -> reward is $0.10
-  const rewardUsd = user.purchaseVerified ? 0.20 : 0.10;
+  const multiplier = user.boostMultiplier || (user.purchaseVerified ? 2.0 : 1.0);
+  const rewardUsd = 0.10 * multiplier;
   const rewardTokens = Number((rewardUsd / price).toFixed(6));
 
   const durationMs = 1 * 60 * 60 * 1000; // 1 hour
@@ -1930,37 +1986,24 @@ export async function completeReferralTask(userId: string, taskId: string) {
     return { ok: false, message: "تم إكمال هذه المهمة بالفعل." };
   }
 
-  if (user.referralCount < 3) {
-    return {
-      ok: false,
-      message: `تحتاج إلى دعوة 3 مستخدمين على الأقل لإكمال هذه المهمة. (لديك حالياً: ${user.referralCount}/3)`,
-    };
-  }
-
   const { error: completionError } = await supabase.from("task_completions").insert({
     user_id: userId,
     task_id: taskId,
-    reward: task.reward,
+    reward: 0, // 0 reward from task completion itself, because rewards are given instantly per friend join!
   });
 
   if (completionError) {
     return { ok: false, message: "تعذر تسجيل إكمال المهمة." };
   }
 
-  const updatedUser = await awardRewardToUser(userId, task.reward);
-
-  if (user.referredBy) {
-    await awardReferralBonus(user.referredBy, userId, taskId, task.reward);
-  }
-
   await checkAndCompleteOnboarding(userId);
 
   return {
     ok: true,
-    message: "تم التحقق وإضافة مكافأة الإحالة بنجاح!",
-    balance: updatedUser?.balance ?? user.balance,
-    pendingBalance: updatedUser?.pendingBalance ?? user.pendingBalance,
-    withdrawableBalance: updatedUser?.withdrawableBalance ?? user.withdrawableBalance,
+    message: "تم تفعيل خطوة الإحالة ومتابعة التنشيط! ستحصل على مكافأة مباشرة لكل صديق يدخل فعلياً.",
+    balance: user.balance,
+    pendingBalance: user.pendingBalance,
+    withdrawableBalance: user.withdrawableBalance,
   };
 }
 
@@ -2214,9 +2257,8 @@ export async function bypassReferralTask(userId: string, taskId: string) {
     await supabase.from("task_completions").insert({
       user_id: userId,
       task_id: taskId,
-      reward: task.reward,
+      reward: 0,
     });
-    await awardRewardToUser(userId, task.reward);
   }
 
   // Update onboarding completed state directly

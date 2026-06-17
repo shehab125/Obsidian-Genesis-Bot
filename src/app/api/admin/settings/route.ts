@@ -13,6 +13,11 @@ const settingsSchema = z.object({
   ownerWallet: z.string().optional().default(""),
   baseRewardUsd: z.number().min(0),
   botActive: z.boolean().optional().default(true),
+  purchasePlans: z.array(z.object({
+    minPurchase: z.number().min(0),
+    lockDays: z.number().int().nonnegative(),
+    multiplier: z.number().min(0),
+  })).optional().default([]),
 });
 
 export async function PATCH(request: Request) {

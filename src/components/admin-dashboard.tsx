@@ -448,10 +448,101 @@ export function AdminDashboard({
                     }
                   />
                 </label>
+                <div className="pt-4 mt-4 border-t border-[#2d3646] space-y-3">
+                  <h3 className="text-sm font-bold text-white flex items-center justify-between">
+                    <span>خطط ومضاعفات الشراء (Purchase Plans & Multipliers)</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const plans = settingsForm.purchasePlans || [];
+                        setSettingsForm((current) => ({
+                          ...current,
+                          purchasePlans: [...plans, { minPurchase: 5, lockDays: 5, multiplier: 2.0 }],
+                        }));
+                      }}
+                      className="text-xs bg-[#242a36] text-gray-300 px-2.5 py-1 rounded hover:bg-[#2d3646] transition-colors font-bold"
+                    >
+                      + إضافة خطة جديدة / Add Plan
+                    </button>
+                  </h3>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-[#2d3646] text-gray-400">
+                          <th className="py-2 pr-2">الحد الأدنى للشراء ($) / Min Purchase</th>
+                          <th className="py-2 px-2">أيام القفل / Lock Days</th>
+                          <th className="py-2 px-2">المضاعف / Multiplier</th>
+                          <th className="py-2 pl-2 text-right">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(settingsForm.purchasePlans || []).map((plan, index) => (
+                          <tr key={index} className="border-b border-[#1b212c]">
+                            <td className="py-2 pr-2">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={plan.minPurchase}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  const updated = [...(settingsForm.purchasePlans || [])];
+                                  updated[index] = { ...plan, minPurchase: val };
+                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                                }}
+                                className="w-20 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+                              />
+                            </td>
+                            <td className="py-2 px-2">
+                              <input
+                                type="number"
+                                value={plan.lockDays}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const updated = [...(settingsForm.purchasePlans || [])];
+                                  updated[index] = { ...plan, lockDays: val };
+                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                                }}
+                                className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+                              />
+                            </td>
+                            <td className="py-2 px-2">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={plan.multiplier}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  const updated = [...(settingsForm.purchasePlans || [])];
+                                  updated[index] = { ...plan, multiplier: val };
+                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                                }}
+                                className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+                              />
+                            </td>
+                            <td className="py-2 pl-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = (settingsForm.purchasePlans || []).filter((_, idx) => idx !== index);
+                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                                }}
+                                className="text-red-400 hover:text-red-500 font-bold"
+                              >
+                                حذف
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={saveSettings}
-                  className="h-10 rounded-lg bg-white px-4 text-sm font-black text-[#0b0d12]"
+                  className="h-10 w-full rounded-lg bg-white px-4 text-sm font-black text-[#0b0d12] hover:bg-white/90 transition-colors mt-2"
                 >
                   Save settings
                 </button>

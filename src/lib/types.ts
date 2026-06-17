@@ -26,6 +26,13 @@ export type AppUser = {
   cooldownBypassed: boolean;
   influencerCode?: string | null;
   walletAddress?: string | null;
+  boostMultiplier?: number;
+};
+
+export type PurchasePlan = {
+  minPurchase: number;
+  lockDays: number;
+  multiplier: number;
 };
 
 export type TelegramInitUser = {
@@ -73,6 +80,7 @@ export type AppSettings = {
   ownerWallet: string;
   baseRewardUsd: number;
   botActive: boolean;
+  purchasePlans: PurchasePlan[];
 };
 
 export type ReviewSubmission = {

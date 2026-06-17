@@ -37,6 +37,10 @@ export const appSettings = {
   ownerWallet: "0x7167C08FD45021c68993057d73f3b35944682635",
   baseRewardUsd: 1.00,
   botActive: true,
+  purchasePlans: [
+    { minPurchase: 3, lockDays: 1, multiplier: 2.0 },
+    { minPurchase: 5, lockDays: 5, multiplier: 3.0 }
+  ],
 };
 
 export const tasks: Task[] = [
