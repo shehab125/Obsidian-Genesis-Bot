@@ -961,8 +961,19 @@ function MiningScreen({
   }, [activeSession, lastSessionStart, user.purchaseVerified]);
 
   const isReferralLocked = false;
-  const isPurchaseLocked = user.miningCyclesCompleted > 0 && !user.purchaseVerified;
+  const isPurchaseLocked = !user.purchaseVerified;
   const isMiningLocked = isReferralLocked || isPurchaseLocked;
+
+  const isNewUser = (user.miningCyclesCompleted || 0) === 0;
+  const currentPlan = isNewUser
+    ? (settings.purchasePlans?.[0] || { minPurchase: 2, lockDays: 1, multiplier: 2.0 })
+    : (settings.purchasePlans?.[1] || settings.purchasePlans?.[0] || { minPurchase: 5, lockDays: 5, multiplier: 2.0 });
+
+  const displayContractsCount = isNewUser ? 1 : contractsCount;
+  const totalCostUsd = displayContractsCount * currentPlan.minPurchase;
+  const planLockDays = currentPlan.lockDays;
+  const totalMultiplier = displayContractsCount * currentPlan.multiplier;
+
   const boostMultiplier = user.boostMultiplier || (user.purchaseVerified ? 2.0 : 1.0);
   const velocity = (boostMultiplier * 0.10) / (tokenUsdPrice || 0.001);
   const usdAccrued = accrued * tokenUsdPrice;
@@ -1070,65 +1081,75 @@ function MiningScreen({
             <h2 className="text-xl font-black text-white">تفعيل عقد تعدين أوبيسيديان</h2>
             <h3 className="text-xs font-black text-gray-300 uppercase tracking-wider">Activate Mining Contract</h3>
             <p className="text-[12px] text-gray-400 leading-relaxed px-2">
-              سعر العقد الواحد هو <span className="text-white font-bold">${settings.requiredPurchaseUsd} USD</span> ومكافأته <span className="text-[#31d67b] font-bold">${settings.baseRewardUsd} USD</span> مع قفل سحب لمدة <span className="text-[#ff8a00] font-bold">{settings.withdrawalLockDays} أيام</span>. يرجى اختيار عدد العقود التي تريد تفعيلها.
+              {isNewUser ? (
+                <>
+                  سعر عقد التسجيل هو <span className="text-white font-bold">${currentPlan.minPurchase} USD</span> ومكافأته مضاعف <span className="text-[#31d67b] font-bold">X{currentPlan.multiplier.toFixed(1)}</span> على مجهودك الأخير مع قفل سحب لمدة <span className="text-[#ff8a00] font-bold">{currentPlan.lockDays} يوم</span>.
+                </>
+              ) : (
+                <>
+                  سعر العقد الواحد هو <span className="text-white font-bold">${currentPlan.minPurchase} USD</span> ومكافأته مضاعف <span className="text-[#31d67b] font-bold">X{currentPlan.multiplier.toFixed(1)}</span> لكل عقد مع قفل سحب لمدة <span className="text-[#ff8a00] font-bold">{currentPlan.lockDays} أيام</span>. يرجى اختيار عدد العقود التي تريد تفعيلها.
+                </>
+              )}
             </p>
           </div>
           {/* Contract Selector */}
-          <div className="space-y-3">
-            <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
-            <div className="grid grid-cols-5 gap-2">
-              {[1, 2, 5, 10, 20]
-                .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
-                .map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => setContractsCount(num)}
-                    className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
-                      contractsCount === num
-                        ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
-                        : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
-                    }`}
-                  >
-                    {num} {num === 1 ? "عقد" : "عقود"}
-                  </button>
-                ))}
-            </div>
+          {!isNewUser && (
+            <div className="space-y-3">
+              <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
+              <div className="grid grid-cols-5 gap-2">
+                {[1, 2, 5, 10, 20]
+                  .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
+                  .map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setContractsCount(num)}
+                      className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                        contractsCount === num
+                          ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                          : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                      }`}
+                    >
+                      {num} {num === 1 ? "عقد" : "عقود"}
+                    </button>
+                  ))}
+              </div>
 
-            {/* Custom Input */}
-            <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
-              <span className="text-xs text-gray-400 font-bold">
-                {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
-              </span>
-              <input
-                type="number"
-                min="1"
-                max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
-                value={contractsCount}
-                onChange={(e) => {
-                  const val = Math.max(1, parseInt(e.target.value) || 1);
-                  setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
-                }}
-                className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
-              />
+              {/* Custom Input */}
+              <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
+                <span className="text-xs text-gray-400 font-bold">
+                  {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
+                  value={contractsCount}
+                  onChange={(e) => {
+                    const val = Math.max(1, parseInt(e.target.value) || 1);
+                    setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
+                  }}
+                  className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
+                />
+              </div>
             </div>
-          </div>
+          )}
             {/* Price & Reward Estimation Card */}
             <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
               <div className="flex justify-between items-center">
-                <span className="font-mono text-white font-black">${(contractsCount * settings.requiredPurchaseUsd).toFixed(2)} USD</span>
+                <span className="font-mono text-white font-black">${totalCostUsd.toFixed(2)} USD</span>
                 <span className="text-gray-400">القيمة المطلوبة / Total Cost:</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="font-mono text-[#31d67b] font-black">+${(contractsCount * settings.baseRewardUsd).toFixed(2)} USD</span>
-                <span className="text-gray-400">إجمالي مكافأة التفعيل / Total Reward:</span>
+                <span className="font-mono text-[#31d67b] font-black">X{totalMultiplier.toFixed(1)}</span>
+                <span className="text-gray-400">مضاعف مجهود الدورة / Cycle Multiplier:</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="font-mono text-[#ff8a00] font-black">{settings.withdrawalLockDays} يوم / Days</span>
+                <span className="font-mono text-[#ff8a00] font-black">{planLockDays} {planLockDays === 1 ? "يوم" : "أيام"} / {planLockDays === 1 ? "Day" : "Days"}</span>
                 <span className="text-gray-400">مدة الاحتفاظ بالعقد / Hold Duration:</span>
               </div>
               <div className="pt-2 border-t border-[#23232a] text-center font-mono text-[10px] text-gray-500">
-                {`~${((contractsCount * settings.requiredPurchaseUsd) / (tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
+                {`~${(totalCostUsd / (tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
               </div>
             </div>
 
@@ -1322,6 +1343,16 @@ function WalletScreen({
   const locked = settings.purchaseConditionEnabled && !user.purchaseVerified;
   const usdBalance = balance * settings.tokenUsdPrice;
 
+  const isNewUser = (user.miningCyclesCompleted || 0) === 0;
+  const currentPlan = isNewUser
+    ? (settings.purchasePlans?.[0] || { minPurchase: 2, lockDays: 1, multiplier: 2.0 })
+    : (settings.purchasePlans?.[1] || settings.purchasePlans?.[0] || { minPurchase: 5, lockDays: 5, multiplier: 2.0 });
+
+  const displayContractsCount = isNewUser ? 1 : contractsCount;
+  const totalCostUsd = displayContractsCount * currentPlan.minPurchase;
+  const planLockDays = currentPlan.lockDays;
+  const totalMultiplier = displayContractsCount * currentPlan.multiplier;
+
   const [timeLeft, setTimeLeft] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1417,7 +1448,7 @@ function WalletScreen({
               label="Minimum Balance Evaluation"
               error={
                 locked
-                  ? `Failed: Requires $${settings.requiredPurchaseUsd.toFixed(2)} USD equivalent in OBSD tokens`
+                  ? `Failed: Requires $${totalCostUsd.toFixed(2)} USD equivalent in OBSD tokens`
                   : undefined
               }
             />
@@ -1427,66 +1458,76 @@ function WalletScreen({
                   <div>
                     <p className="font-bold text-[#ff8a00] text-right">تفعيل عقد تعدين أوبيسيديان / Activate Contract</p>
                     <p className="text-[11px] text-gray-400 mt-1 leading-normal text-right">
-                      سعر العقد الواحد هو <strong>${settings.requiredPurchaseUsd} USD</strong> ومكافأته <strong>${settings.baseRewardUsd} USD</strong> مع قفل سحب لمدة <strong>{settings.withdrawalLockDays} أيام</strong>.
+                      {isNewUser ? (
+                        <>
+                          سعر عقد التسجيل هو <strong>${currentPlan.minPurchase} USD</strong> ومكافأته مضاعف <strong>X{currentPlan.multiplier.toFixed(1)}</strong> على مجهودك الأخير مع قفل سحب لمدة <strong>{currentPlan.lockDays} يوم</strong>.
+                        </>
+                      ) : (
+                        <>
+                          سعر العقد الواحد هو <strong>${currentPlan.minPurchase} USD</strong> ومكافأته مضاعف <strong>X{currentPlan.multiplier.toFixed(1)}</strong> لكل عقد مع قفل سحب لمدة <strong>{currentPlan.lockDays} أيام</strong>.
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
                 {/* Contract Selector */}
-                <div className="space-y-3">
-                  <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
-                  <div className="grid grid-cols-5 gap-2">
-                    {[1, 2, 5, 10, 20]
-                      .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
-                      .map((num) => (
-                        <button
-                          key={num}
-                          type="button"
-                          onClick={() => setContractsCount(num)}
-                          className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
-                            contractsCount === num
-                              ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
-                              : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
-                          }`}
-                        >
-                          {num} {num === 1 ? "عقد" : "عقود"}
-                        </button>
-                      ))}
-                  </div>
+                {!isNewUser && (
+                  <div className="space-y-3">
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
+                    <div className="grid grid-cols-5 gap-2">
+                      {[1, 2, 5, 10, 20]
+                        .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
+                        .map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => setContractsCount(num)}
+                            className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                              contractsCount === num
+                                ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                                : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                            }`}
+                          >
+                            {num} {num === 1 ? "عقد" : "عقود"}
+                          </button>
+                        ))}
+                    </div>
 
-                  {/* Custom Input */}
-                  <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
-                    <span className="text-xs text-gray-400 font-bold">
-                      {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
-                      value={contractsCount}
-                      onChange={(e) => {
-                        const val = Math.max(1, parseInt(e.target.value) || 1);
-                        setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
-                      }}
-                      className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
-                    />
+                    {/* Custom Input */}
+                    <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
+                      <span className="text-xs text-gray-400 font-bold">
+                        {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
+                      </span>
+                      <input
+                        type="number"
+                        min="1"
+                        max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
+                        value={contractsCount}
+                        onChange={(e) => {
+                          const val = Math.max(1, parseInt(e.target.value) || 1);
+                          setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
+                        }}
+                        className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
                   {/* Price & Reward Estimation Card */}
                   <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
                     <div className="flex justify-between items-center">
-                      <span className="font-mono text-white font-black">${(contractsCount * settings.requiredPurchaseUsd).toFixed(2)} USD</span>
+                      <span className="font-mono text-white font-black">${totalCostUsd.toFixed(2)} USD</span>
                       <span className="text-gray-400">القيمة المطلوبة / Total Cost:</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="font-mono text-[#31d67b] font-black">+${(contractsCount * settings.baseRewardUsd).toFixed(2)} USD</span>
-                      <span className="text-gray-400">إجمالي مكافأة التفعيل / Total Reward:</span>
+                      <span className="font-mono text-[#31d67b] font-black">X{totalMultiplier.toFixed(1)}</span>
+                      <span className="text-gray-400">مضاعف مجهود الدورة / Cycle Multiplier:</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="font-mono text-[#ff8a00] font-black">{settings.withdrawalLockDays} يوم / Days</span>
+                      <span className="font-mono text-[#ff8a00] font-black">{planLockDays} {planLockDays === 1 ? "يوم" : "أيام"} / {planLockDays === 1 ? "Day" : "Days"}</span>
                       <span className="text-gray-400">مدة الاحتفاظ بالعقد / Hold Duration:</span>
                     </div>
                     <div className="pt-2 border-t border-[#23232a] text-center font-mono text-[10px] text-gray-500">
-                      {`~${((contractsCount * settings.requiredPurchaseUsd) / (settings.tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
+                      {`~${(totalCostUsd / (settings.tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
                     </div>
                   </div>
 

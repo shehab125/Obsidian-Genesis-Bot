@@ -57,6 +57,8 @@ type DbUser = {
   influencer_code?: string | null;
   wallet_address?: string | null;
   boost_multiplier?: number;
+  last_cycle_earned_tokens?: number;
+  last_cycle_doubled?: boolean;
 };
 
 type DbTask = {
@@ -677,15 +679,23 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
     return { ok: false, message: "عنوان هذه المحفظة مستخدم بالفعل لتفعيل حساب آخر." };
   }
 
+  // Choose plan dynamically based on whether user is new or pre-registered
+  const isNewUser = (user.miningCyclesCompleted || 0) === 0;
+  const plan = isNewUser
+    ? (settings.purchasePlans[0] || { minPurchase: 2, lockDays: 1, multiplier: 2.0 })
+    : (settings.purchasePlans[1] || settings.purchasePlans[0] || { minPurchase: 5, lockDays: 5, multiplier: 2.0 });
+
+  const finalContractsCount = isNewUser ? 1 : contractsCount;
+  const requiredUsd = finalContractsCount * plan.minPurchase;
+
   // 2. Fetch balance
   const balance = await getErc20Balance(contractAddress, walletAddress);
   const usdValue = balance * settings.tokenUsdPrice;
-  const requiredUsd = contractsCount * settings.requiredPurchaseUsd;
 
   if (usdValue < requiredUsd) {
     return {
       ok: false,
-      message: `لم نجد رصيد كافٍ من العملة في محفظتك لتفعيل عدد ${contractsCount} عقود. رصيدك الحالي: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). القيمة المطلوبة لتفعيل ${contractsCount} عقود هي $${requiredUsd.toFixed(2)} USD. يرجى الشراء من QuickSwap وإعادة المحاولة.`
+      message: `لم نجد رصيد كافٍ من العملة في محفظتك لتفعيل عدد ${finalContractsCount} عقود. رصيدك الحالي: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). القيمة المطلوبة لتفعيل ${finalContractsCount} عقود هي $${requiredUsd.toFixed(2)} USD. يرجى الشراء من QuickSwap وإعادة المحاولة.`
     };
   }
 
@@ -694,7 +704,7 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
   await supabase.from("purchase_verification_requests").insert({
     user_id: userId,
     wallet_address: cleanWalletAddress,
-    proof_url: "Contracts: " + contractsCount,
+    proof_url: "Contracts: " + finalContractsCount,
     status: "approved",
     reviewed_at: new Date().toISOString()
   });
@@ -707,7 +717,7 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
 
   return {
     ok: true,
-    message: `تهانينا! تم التحقق من محفظتك وتفعيل عدد ${contractsCount} عقود بنجاح! رصيدك: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). تم تفعيل مضاعف التعدين، السحب وبدء دورة تعدين جديدة.`,
+    message: `تهانينا! تم التحقق من محفظتك وتفعيل عدد ${finalContractsCount} عقود بنجاح! رصيدك: ${balance.toFixed(2)} OBSD (ما يعادل $${usdValue.toFixed(2)} USD). تم تفعيل مضاعف التعدين، السحب وبدء دورة تعدين جديدة.`,
   };
 }
 
@@ -1012,9 +1022,15 @@ export async function verifyUserPurchase(userId: string) {
     }
   }
 
-  // 3. Contract scaling logic
-  const nextBoostMultiplier = Number((contractsCount * 2.00).toFixed(2));
-  const computedLockDays = settings.withdrawalLockDays || 0;
+  // 3. Dynamic Plan Selection & Scaling
+  const isNewUser = (user.miningCyclesCompleted || 0) === 0;
+  const plan = isNewUser
+    ? (settings.purchasePlans[0] || { minPurchase: 2, lockDays: 1, multiplier: 2.0 })
+    : (settings.purchasePlans[1] || settings.purchasePlans[0] || { minPurchase: 5, lockDays: 5, multiplier: 2.0 });
+
+  const finalContractsCount = isNewUser ? 1 : contractsCount;
+  const nextBoostMultiplier = Number((finalContractsCount * plan.multiplier).toFixed(2));
+  const computedLockDays = plan.lockDays || 0;
 
   let unlockAt: string | null = null;
   if (computedLockDays > 0) {
@@ -1023,10 +1039,10 @@ export async function verifyUserPurchase(userId: string) {
     unlockAt = d.toISOString();
   }
 
-  const rewardUsd = contractsCount * settings.baseRewardUsd;
-  const rewardTokens = Math.round(rewardUsd / (settings.tokenUsdPrice || 0.001));
+  // Double reward logic: (multiplier - 1) * last cycle earned tokens
+  const rewardTokens = Math.max(0, Math.floor((nextBoostMultiplier - 1.0) * (user.lastCycleEarnedTokens || 0)));
 
-  // 4. Update user record (add proportional reward to balance and withdrawable)
+  // 4. Update user record (add doubled reward to balance and withdrawable)
   const nextWithdrawable = user.withdrawableBalance + user.pendingBalance + rewardTokens;
   const nextBalance = user.balance + rewardTokens;
 
@@ -1039,6 +1055,7 @@ export async function verifyUserPurchase(userId: string) {
     unlock_at: unlockAt,
     cooldown_bypassed: true,
     wallet_address: walletAddress || null,
+    last_cycle_doubled: true,
   };
 
   userUpdateObj.boost_multiplier = nextBoostMultiplier;
@@ -1656,6 +1673,8 @@ function mapUser(user: DbUser, completedTasks: number): AppUser {
     influencerCode: user.influencer_code,
     walletAddress: user.wallet_address,
     boostMultiplier: Number(user.boost_multiplier ?? 1.00),
+    lastCycleEarnedTokens: user.last_cycle_earned_tokens ?? 0,
+    lastCycleDoubled: user.last_cycle_doubled ?? false,
   };
 }
 
@@ -1679,12 +1698,17 @@ async function awardRewardToUser(userId: string, amount: number) {
       ? user.withdrawableBalance
       : user.withdrawableBalance + amount;
 
+  const nextLastCycleEarned = (user.lastCycleDoubled)
+    ? (user.lastCycleEarnedTokens ?? 0)
+    : (user.lastCycleEarnedTokens ?? 0) + amount;
+
   const { data } = await supabase
     .from("app_users")
     .update({
       balance: nextBalance,
       balance_pending: nextPending,
       balance_withdrawable: nextWithdrawable,
+      last_cycle_earned_tokens: nextLastCycleEarned,
     })
     .eq("id", userId)
     .select("*")
@@ -1871,12 +1895,37 @@ export async function claimMiningSession(userId: string) {
   const amount = Number(session.reward_tokens);
   await awardRewardToUser(userId, amount);
 
-  // Increment completed mining cycles
+  // Delete non-onboarding social task completions and submissions so they are unlocked for the next cycle
+  const { data: socialTasks } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("is_social_media", true)
+    .eq("is_onboarding", false);
+
+  if (socialTasks && socialTasks.length > 0) {
+    const socialTaskIds = socialTasks.map((t) => t.id);
+    await supabase
+      .from("task_completions")
+      .delete()
+      .eq("user_id", userId)
+      .in("task_id", socialTaskIds);
+
+    await supabase
+      .from("review_submissions")
+      .delete()
+      .eq("user_id", userId)
+      .in("task_id", socialTaskIds);
+  }
+
+  // Increment completed mining cycles and lock user
   const nextCycles = (user.miningCyclesCompleted || 0) + 1;
   const { data: updatedUser } = await supabase
     .from("app_users")
     .update({
       mining_cycles_completed: nextCycles,
+      purchase_verified: false,
+      last_cycle_earned_tokens: amount,
+      last_cycle_doubled: false,
     })
     .eq("id", userId)
     .select("*")

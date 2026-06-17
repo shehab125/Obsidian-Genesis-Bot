@@ -27,6 +27,8 @@ export type AppUser = {
   influencerCode?: string | null;
   walletAddress?: string | null;
   boostMultiplier?: number;
+  lastCycleEarnedTokens?: number;
+  lastCycleDoubled?: boolean;
 };
 
 export type PurchasePlan = {

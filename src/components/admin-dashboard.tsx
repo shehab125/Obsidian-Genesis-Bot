@@ -13,7 +13,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import type {
   AppSettings,
   AppUser,
@@ -499,61 +499,20 @@ export function AdminDashboard({
                       </thead>
                       <tbody>
                         {(settingsForm.purchasePlans || []).map((plan, index) => (
-                          <tr key={index} className="border-b border-[#1b212c]">
-                            <td className="py-2 pr-2">
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={plan.minPurchase}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0;
-                                  const updated = [...(settingsForm.purchasePlans || [])];
-                                  updated[index] = { ...plan, minPurchase: val };
-                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
-                                }}
-                                className="w-20 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
-                              />
-                            </td>
-                            <td className="py-2 px-2">
-                              <input
-                                type="number"
-                                value={plan.lockDays}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value) || 0;
-                                  const updated = [...(settingsForm.purchasePlans || [])];
-                                  updated[index] = { ...plan, lockDays: val };
-                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
-                                }}
-                                className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
-                              />
-                            </td>
-                            <td className="py-2 px-2">
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={plan.multiplier}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0;
-                                  const updated = [...(settingsForm.purchasePlans || [])];
-                                  updated[index] = { ...plan, multiplier: val };
-                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
-                                }}
-                                className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
-                              />
-                            </td>
-                            <td className="py-2 pl-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = (settingsForm.purchasePlans || []).filter((_, idx) => idx !== index);
-                                  setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
-                                }}
-                                className="text-red-400 hover:text-red-500 font-bold"
-                              >
-                                حذف
-                              </button>
-                            </td>
-                          </tr>
+                          <PlanRow
+                            key={index}
+                            plan={plan}
+                            index={index}
+                            onUpdate={(updatedPlan) => {
+                              const updated = [...(settingsForm.purchasePlans || [])];
+                              updated[index] = updatedPlan;
+                              setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                            }}
+                            onDelete={() => {
+                              const updated = (settingsForm.purchasePlans || []).filter((_, idx) => idx !== index);
+                              setSettingsForm((current) => ({ ...current, purchasePlans: updated }));
+                            }}
+                          />
                         ))}
                       </tbody>
                     </table>
@@ -951,15 +910,30 @@ function SettingNumber({
   step: string;
   onChange: (value: number) => void;
 }) {
+  const [localVal, setLocalVal] = React.useState(String(value));
+
+  React.useEffect(() => {
+    if (parseFloat(localVal) !== value) {
+      setLocalVal(String(value));
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    setLocalVal(raw);
+    const parsed = parseFloat(raw);
+    if (!isNaN(parsed)) {
+      onChange(parsed);
+    }
+  };
+
   return (
     <label className="grid gap-1 text-sm text-[#cbd5e1]">
       {label}
       <input
-        type="number"
-        min={0}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
+        type="text"
+        value={localVal}
+        onChange={handleChange}
         className="h-10 rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 outline-none focus:border-[#d69a2d]"
       />
     </label>
@@ -1063,5 +1037,95 @@ function Empty({ text }: { text: string }) {
     <div className="rounded-lg border border-dashed border-[#2d3646] bg-[#0b0d12] p-5 text-sm text-[#94a3b8]">
       {text}
     </div>
+  );
+}
+
+function PlanRow({
+  plan,
+  index,
+  onUpdate,
+  onDelete,
+}: {
+  plan: any;
+  index: number;
+  onUpdate: (updatedPlan: any) => void;
+  onDelete: () => void;
+}) {
+  const [minPurchase, setMinPurchase] = React.useState(String(plan.minPurchase));
+  const [lockDays, setLockDays] = React.useState(String(plan.lockDays));
+  const [multiplier, setMultiplier] = React.useState(String(plan.multiplier));
+
+  React.useEffect(() => {
+    if (parseFloat(minPurchase) !== plan.minPurchase) setMinPurchase(String(plan.minPurchase));
+  }, [plan.minPurchase]);
+
+  React.useEffect(() => {
+    if (parseInt(lockDays) !== plan.lockDays) setLockDays(String(plan.lockDays));
+  }, [plan.lockDays]);
+
+  React.useEffect(() => {
+    if (parseFloat(multiplier) !== plan.multiplier) setMultiplier(String(plan.multiplier));
+  }, [plan.multiplier]);
+
+  const handleMinPurchaseChange = (val: string) => {
+    setMinPurchase(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed)) {
+      onUpdate({ ...plan, minPurchase: parsed });
+    }
+  };
+
+  const handleLockDaysChange = (val: string) => {
+    setLockDays(val);
+    const parsed = parseInt(val);
+    if (!isNaN(parsed)) {
+      onUpdate({ ...plan, lockDays: parsed });
+    }
+  };
+
+  const handleMultiplierChange = (val: string) => {
+    setMultiplier(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed)) {
+      onUpdate({ ...plan, multiplier: parsed });
+    }
+  };
+
+  return (
+    <tr className="border-b border-[#1b212c]">
+      <td className="py-2 pr-2">
+        <input
+          type="text"
+          value={minPurchase}
+          onChange={(e) => handleMinPurchaseChange(e.target.value)}
+          className="w-20 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+        />
+      </td>
+      <td className="py-2 px-2">
+        <input
+          type="text"
+          value={lockDays}
+          onChange={(e) => handleLockDaysChange(e.target.value)}
+          className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+        />
+      </td>
+      <td className="py-2 px-2">
+        <input
+          type="text"
+          value={multiplier}
+          onChange={(e) => handleMultiplierChange(e.target.value)}
+          className="w-16 bg-[#0d1118] border border-[#2d3646] rounded px-2 py-1 text-white outline-none"
+        />
+      </td>
+      <td className="py-2 pl-2 text-right">
+        <button
+          type="button"
+          onClick={onDelete}
+          className="text-red-400 hover:text-red-500 font-bold animate-pulse"
+        >
+          حذف
+        </button>
+      </td>
+    </tr>
   );
 }
