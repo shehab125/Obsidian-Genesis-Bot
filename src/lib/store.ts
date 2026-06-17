@@ -122,6 +122,8 @@ type DbSettings = {
   base_reward_usd?: number;
   bot_active?: boolean;
   purchase_plans?: any;
+  max_contracts_limit_enabled?: boolean;
+  max_contracts_limit?: number;
 };
 
 export async function getDashboardData() {
@@ -905,6 +907,8 @@ export async function updateAppSettings(input: AppSettings) {
     owner_wallet: input.ownerWallet,
     base_reward_usd: input.baseRewardUsd,
     bot_active: input.botActive,
+    max_contracts_limit_enabled: input.maxContractsLimitEnabled,
+    max_contracts_limit: input.maxContractsLimit,
     updated_at: new Date().toISOString(),
   };
 
@@ -915,18 +919,25 @@ export async function updateAppSettings(input: AppSettings) {
   const { error } = await supabase.from("app_settings").upsert(updateObj, { onConflict: "id" });
 
   if (error) {
-    if (error.message.includes("purchase_plans") || error.code === "P0002" || error.message.includes("does not exist")) {
+    if (
+      error.message.includes("purchase_plans") ||
+      error.message.includes("max_contracts") ||
+      error.code === "P0002" ||
+      error.message.includes("does not exist")
+    ) {
       delete updateObj.purchase_plans;
+      delete updateObj.max_contracts_limit_enabled;
+      delete updateObj.max_contracts_limit;
       const { error: retryError } = await supabase.from("app_settings").upsert(updateObj, { onConflict: "id" });
       if (retryError) {
         return { ok: false, message: "تعذر تحديث الإعدادات: " + retryError.message };
       }
-      return { ok: true, message: "تم تحديث الإعدادات (لكن يرجى تشغيل أمر الهجرة SQL لإتاحة ميزة خطط الشراء)." };
+      return { ok: true, message: "تم تحديث الإعدادات (لكن يرجى تشغيل أمر الهجرة SQL لإتاحة ميزة خطط الشراء والحد الأقصى لعقود التعدين)." };
     }
     return { ok: false, message: "تعذر تحديث الإعدادات: " + error.message };
   }
 
-  return { ok: true, message: "تم تحديث إعدادات السحب والشراء والتعليق والخطط." };
+  return { ok: true, message: "تم تحديث إعدادات السحب والشراء والتعليق والحد الأقصى بنجاح." };
 }
 
 export async function updatePurchaseVerificationStatus(id: string, status: ReviewStatus) {
@@ -1522,6 +1533,8 @@ export async function getAppSettings(): Promise<AppSettings> {
       lockDays: Number(p.lockDays ?? p.lock_days ?? 0),
       multiplier: Number(p.multiplier ?? p.boost_multiplier ?? 1.00),
     })),
+    maxContractsLimitEnabled: Boolean(settings.max_contracts_limit_enabled ?? false),
+    maxContractsLimit: Number(settings.max_contracts_limit ?? 10),
   };
 }
 

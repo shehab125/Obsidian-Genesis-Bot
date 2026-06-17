@@ -25,3 +25,8 @@ select,
 textarea {
   -webkit-tap-highlight-color: transparent;
 }
+
+input, textarea {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}

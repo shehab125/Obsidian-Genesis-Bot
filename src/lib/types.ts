@@ -81,6 +81,8 @@ export type AppSettings = {
   baseRewardUsd: number;
   botActive: boolean;
   purchasePlans: PurchasePlan[];
+  maxContractsLimitEnabled: boolean;
+  maxContractsLimit: number;
 };
 
 export type ReviewSubmission = {

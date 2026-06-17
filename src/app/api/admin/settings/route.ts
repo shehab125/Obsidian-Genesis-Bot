@@ -18,6 +18,8 @@ const settingsSchema = z.object({
     lockDays: z.number().int().nonnegative(),
     multiplier: z.number().min(0),
   })).optional().default([]),
+  maxContractsLimitEnabled: z.boolean().optional().default(false),
+  maxContractsLimit: z.number().int().positive().optional().default(10),
 });
 
 export async function PATCH(request: Request) {

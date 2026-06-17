@@ -436,6 +436,27 @@ export function AdminDashboard({
                   />
                 </label>
                 <label className="flex items-center justify-between rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 py-3 text-sm">
+                  Enable Max Contracts Limit / تفعيل الحد الأقصى لعدد العقود
+                  <input
+                    type="checkbox"
+                    checked={settingsForm.maxContractsLimitEnabled || false}
+                    onChange={(event) =>
+                      setSettingsForm((current) => ({
+                        ...current,
+                        maxContractsLimitEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                </label>
+                <SettingNumber
+                  label="Max Contracts Limit / الحد الأقصى لعدد العقود"
+                  value={settingsForm.maxContractsLimit || 10}
+                  step="1"
+                  onChange={(value) =>
+                    setSettingsForm((current) => ({ ...current, maxContractsLimit: value }))
+                  }
+                />
+                <label className="flex items-center justify-between rounded-lg border border-[#2d3646] bg-[#0b0d12] px-3 py-3 text-sm">
                   Bot Active / تشغيل البوت (إيقاف عام)
                   <input
                     type="checkbox"

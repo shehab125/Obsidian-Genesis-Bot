@@ -41,6 +41,8 @@ export const appSettings = {
     { minPurchase: 3, lockDays: 1, multiplier: 2.0 },
     { minPurchase: 5, lockDays: 5, multiplier: 3.0 }
   ],
+  maxContractsLimitEnabled: false,
+  maxContractsLimit: 10,
 };
 
 export const tasks: Task[] = [

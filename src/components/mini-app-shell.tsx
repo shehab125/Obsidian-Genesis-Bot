@@ -387,6 +387,11 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
       setMessage("Please input your wallet address first.");
       return;
     }
+    const cleanAddress = walletAddress.trim();
+    if (!cleanAddress.startsWith("0x") || cleanAddress.length !== 42) {
+      setMessage("تنبيه: عنوان المحفظة غير صالح. يجب أن يبدأ بـ 0x ويتكون من 42 حرفاً.");
+      return;
+    }
     setMessage("Verifying OBSD purchase on Polygon... Please wait.");
     try {
       const response = await fetch("/api/purchase-verification", {
@@ -1068,39 +1073,46 @@ function MiningScreen({
               سعر العقد الواحد هو <span className="text-white font-bold">${settings.requiredPurchaseUsd} USD</span> ومكافأته <span className="text-[#31d67b] font-bold">${settings.baseRewardUsd} USD</span> مع قفل سحب لمدة <span className="text-[#ff8a00] font-bold">{settings.withdrawalLockDays} أيام</span>. يرجى اختيار عدد العقود التي تريد تفعيلها.
             </p>
           </div>
-
           {/* Contract Selector */}
           <div className="space-y-3">
             <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
             <div className="grid grid-cols-5 gap-2">
-              {[1, 2, 5, 10, 20].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => setContractsCount(num)}
-                  className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
-                    contractsCount === num
-                      ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
-                      : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
-                  }`}
-                >
-                  {num} {num === 1 ? "عقد" : "عقود"}
-                </button>
-              ))}
+              {[1, 2, 5, 10, 20]
+                .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
+                .map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => setContractsCount(num)}
+                    className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                      contractsCount === num
+                        ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                        : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                    }`}
+                  >
+                    {num} {num === 1 ? "عقد" : "عقود"}
+                  </button>
+                ))}
             </div>
 
             {/* Custom Input */}
             <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
-              <span className="text-xs text-gray-400 font-bold">عدد مخصص / Custom:</span>
+              <span className="text-xs text-gray-400 font-bold">
+                {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
+              </span>
               <input
                 type="number"
                 min="1"
+                max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
                 value={contractsCount}
-                onChange={(e) => setContractsCount(Math.max(1, parseInt(e.target.value) || 1))}
+                onChange={(e) => {
+                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                  setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
+                }}
                 className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
               />
             </div>
-
+          </div>
             {/* Price & Reward Estimation Card */}
             <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
               <div className="flex justify-between items-center">
@@ -1119,9 +1131,8 @@ function MiningScreen({
                 {`~${((contractsCount * settings.requiredPurchaseUsd) / (tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
               </div>
             </div>
-          </div>
 
-          <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+            <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
             <div>
               <p className="font-bold text-[#ff8a00]">Need OBSD tokens to unlock?</p>
               <p className="text-[11px] text-gray-400 mt-1 leading-normal">
@@ -1139,12 +1150,29 @@ function MiningScreen({
           </div>
 
           <div className="space-y-3">
-            <input
-              value={walletAddress}
-              onChange={(e) => setWalletAddress(e.target.value)}
-              placeholder="Enter Polygon Wallet Address (0x...)"
-              className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold text-white outline-none focus:border-[#ff8a00]"
-            />
+            <div className="relative flex items-center">
+              <input
+                value={walletAddress}
+                onChange={(e) => setWalletAddress(e.target.value)}
+                placeholder="Enter Polygon Wallet Address (0x...)"
+                className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] pl-16 pr-4 text-sm font-bold text-white outline-none focus:border-[#ff8a00]"
+                style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard.readText();
+                    if (text) setWalletAddress(text);
+                  } catch (err) {
+                    console.error("Paste failed:", err);
+                  }
+                }}
+                className="absolute left-2 px-3 py-1 bg-[#ff8a00]/10 hover:bg-[#ff8a00]/20 text-[#ff8a00] text-xs font-black rounded-lg border border-[#ff8a00]/20 transition-all cursor-pointer"
+              >
+                لصق
+              </button>
+            </div>
             <button
               onClick={submitPurchaseVerification}
               className="w-full h-12 bg-[#31d67b]/20 hover:bg-[#31d67b]/30 text-[#31d67b] border border-[#31d67b]/30 text-sm font-black rounded-xl transition duration-200"
@@ -1403,39 +1431,46 @@ function WalletScreen({
                     </p>
                   </div>
                 </div>
-
                 {/* Contract Selector */}
                 <div className="space-y-3">
                   <p className="text-[11px] font-black text-gray-400 uppercase tracking-wider text-right">اختر عدد العقود / Select Contracts:</p>
                   <div className="grid grid-cols-5 gap-2">
-                    {[1, 2, 5, 10, 20].map((num) => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setContractsCount(num)}
-                        className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
-                          contractsCount === num
-                            ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
-                            : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
-                        }`}
-                      >
-                        {num} {num === 1 ? "عقد" : "عقود"}
-                      </button>
-                    ))}
+                    {[1, 2, 5, 10, 20]
+                      .filter((num) => !settings.maxContractsLimitEnabled || num <= settings.maxContractsLimit)
+                      .map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setContractsCount(num)}
+                          className={`h-10 rounded-lg font-black text-xs transition-all duration-200 ${
+                            contractsCount === num
+                              ? "bg-[#ff8a00] text-black shadow-[0_0_15px_rgba(255,138,0,0.3)]"
+                              : "bg-[#121216] border border-[#23232a] text-gray-300 hover:border-gray-500"
+                          }`}
+                        >
+                          {num} {num === 1 ? "عقد" : "عقود"}
+                        </button>
+                      ))}
                   </div>
 
                   {/* Custom Input */}
                   <div className="flex items-center justify-between bg-[#080808] border border-[#23232a] rounded-lg px-3 py-2">
-                    <span className="text-xs text-gray-400 font-bold">عدد مخصص / Custom:</span>
+                    <span className="text-xs text-gray-400 font-bold">
+                      {settings.maxContractsLimitEnabled ? `عدد مخصص (الحد الأقصى ${settings.maxContractsLimit})` : "عدد مخصص / Custom:"}
+                    </span>
                     <input
                       type="number"
                       min="1"
+                      max={settings.maxContractsLimitEnabled ? settings.maxContractsLimit : undefined}
                       value={contractsCount}
-                      onChange={(e) => setContractsCount(Math.max(1, parseInt(e.target.value) || 1))}
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        setContractsCount(settings.maxContractsLimitEnabled ? Math.min(val, settings.maxContractsLimit) : val);
+                      }}
                       className="w-20 bg-transparent text-right text-sm text-[#ff8a00] font-black outline-none"
                     />
                   </div>
-
+                </div>
                   {/* Price & Reward Estimation Card */}
                   <div className="p-4 rounded-xl bg-[#121216] border border-[#ff8a00]/20 space-y-2 text-xs text-right">
                     <div className="flex justify-between items-center">
@@ -1454,9 +1489,8 @@ function WalletScreen({
                       {`~${((contractsCount * settings.requiredPurchaseUsd) / (settings.tokenUsdPrice || 0.001)).toLocaleString(undefined, { maximumFractionDigits: 0 })} OBSD required in wallet`}
                     </div>
                   </div>
-                </div>
 
-                <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
+                  <div className="p-4 rounded-xl bg-[#120c02] border border-[#ff8a00]/30 text-xs space-y-3">
                   <div>
                     <p className="font-bold text-[#ff8a00]">Need OBSD tokens to unlock?</p>
                     <p className="text-[11px] text-gray-400 mt-1 leading-normal text-right">
@@ -1492,12 +1526,29 @@ function WalletScreen({
               inputMode="numeric"
               className="h-12 w-full rounded-[12px] border border-[#ff8a00] bg-[#080808] px-4 text-sm font-bold outline-none"
             />
-            <input
-              value={walletAddress}
-              onChange={(event) => setWalletAddress(event.target.value)}
-              placeholder="Wallet address"
-              className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] px-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
-            />
+            <div className="relative flex items-center">
+              <input
+                value={walletAddress}
+                onChange={(event) => setWalletAddress(event.target.value)}
+                placeholder="Wallet address"
+                className="h-12 w-full rounded-[12px] border border-[#23232a] bg-[#080808] pl-16 pr-4 text-sm font-bold outline-none focus:border-[#ff8a00]"
+                style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard.readText();
+                    if (text) setWalletAddress(text);
+                  } catch (err) {
+                    console.error("Paste failed:", err);
+                  }
+                }}
+                className="absolute left-2 px-3 py-1 bg-[#ff8a00]/10 hover:bg-[#ff8a00]/20 text-[#ff8a00] text-xs font-black rounded-lg border border-[#ff8a00]/20 transition-all cursor-pointer"
+              >
+                لصق
+              </button>
+            </div>
             {locked && (
               <button
                 type="button"
