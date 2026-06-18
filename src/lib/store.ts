@@ -1056,25 +1056,43 @@ export async function verifyUserPurchase(userId: string) {
     cooldown_bypassed: true,
     wallet_address: walletAddress || null,
     last_cycle_doubled: true,
+    boost_multiplier: nextBoostMultiplier,
   };
 
-  userUpdateObj.boost_multiplier = nextBoostMultiplier;
+  // Try updating with all fields first, then progressively strip optional columns on schema errors
+  const optionalColumns = ["boost_multiplier", "wallet_address", "last_cycle_doubled"];
+  let lastError: any = null;
 
+  // Attempt 1: all fields
   const { error: userUpdateError } = await supabase
     .from("app_users")
     .update(userUpdateObj)
     .eq("id", userId);
 
-  if (userUpdateError) {
-    if (userUpdateError.message.includes("boost_multiplier") || userUpdateError.message.includes("does not exist")) {
-      delete userUpdateObj.boost_multiplier;
-      await supabase
-        .from("app_users")
-        .update(userUpdateObj)
-        .eq("id", userId);
-    } else {
-      return { ok: false, message: "تعذر تحديث رصيد المستخدم: " + userUpdateError.message };
+  if (!userUpdateError) {
+    lastError = null;
+  } else if (
+    userUpdateError.message.includes("does not exist") ||
+    userUpdateError.message.includes("schema cache") ||
+    userUpdateError.message.includes("column")
+  ) {
+    // Strip optional columns one-by-one and retry
+    console.error("verifyUserPurchase: first update failed, stripping optional columns:", userUpdateError.message);
+    for (const col of optionalColumns) {
+      delete userUpdateObj[col];
     }
+    const { error: retryError } = await supabase
+      .from("app_users")
+      .update(userUpdateObj)
+      .eq("id", userId);
+    lastError = retryError;
+  } else {
+    lastError = userUpdateError;
+  }
+
+  if (lastError) {
+    console.error("verifyUserPurchase: final update error:", lastError.message);
+    return { ok: false, message: "تعذر تحديث رصيد المستخدم: " + lastError.message };
   }
 
   // 5. Influencer Commission Logic
