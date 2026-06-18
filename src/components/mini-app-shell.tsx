@@ -118,6 +118,9 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
         setPendingBalance(payload.user.pendingBalance);
         setWithdrawableBalance(payload.user.withdrawableBalance);
         setWithdrawAmount(String(payload.settings.minimumWithdrawalPoints));
+        if (payload.user.walletAddress) {
+          setWalletAddress(payload.user.walletAddress);
+        }
         setSessionReady(true);
         setMessage("TELEGRAM SESSION VERIFIED");
 
@@ -418,6 +421,9 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
           setBalance(p.user.balance);
           setPendingBalance(p.user.pendingBalance);
           setWithdrawableBalance(p.user.withdrawableBalance);
+          if (p.user.walletAddress) {
+            setWalletAddress(p.user.walletAddress);
+          }
           // Refetch active mining session to clear locked status
           fetchActiveMiningSession(p.user.id);
         }
@@ -1590,7 +1596,7 @@ function WalletScreen({
                 لصق
               </button>
             </div>
-            {locked && (
+            {locked ? (
               <button
                 type="button"
                 onClick={submitPurchaseVerification}
@@ -1598,6 +1604,16 @@ function WalletScreen({
               >
                 Verify Purchase (Automatic)
               </button>
+            ) : (
+              (!user.walletAddress || walletAddress !== user.walletAddress) && (
+                <button
+                  type="button"
+                  onClick={submitPurchaseVerification}
+                  className="h-12 w-full rounded-[12px] border border-[#ff8a00] bg-[#120c02] text-sm font-black text-[#ff8a00] cursor-pointer"
+                >
+                  Link & Save Wallet / حفظ وربط المحفظة
+                </button>
+              )
             )}
           </section>
 

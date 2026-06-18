@@ -580,7 +580,11 @@ export async function createWithdrawal(input: {
 
   await supabase
     .from("app_users")
-    .update({ balance: nextBalance, balance_withdrawable: nextWithdrawable })
+    .update({ 
+      balance: nextBalance, 
+      balance_withdrawable: nextWithdrawable,
+      wallet_address: input.walletAddress
+    })
     .eq("id", input.userId);
 
   return {
@@ -657,7 +661,40 @@ export async function verifyUserPurchaseAutomatic(userId: string, walletAddress:
   }
 
   if (user.purchaseVerified) {
-    return { ok: true, message: "حسابك مفعل بالفعل." };
+    if (!user.walletAddress || user.walletAddress !== walletAddress) {
+      // Check duplicate wallet usage
+      const { data: duplicate } = await supabase
+        .from("app_users")
+        .select("id")
+        .eq("wallet_address", walletAddress)
+        .maybeSingle();
+
+      if (duplicate && duplicate.id !== userId) {
+        return { ok: false, message: "عنوان هذه المحفظة مستخدم بالفعل لتفعيل حساب آخر." };
+      }
+
+      // Update wallet address
+      const { error: updateErr } = await supabase
+        .from("app_users")
+        .update({ wallet_address: walletAddress })
+        .eq("id", userId);
+
+      if (updateErr) {
+        return { ok: false, message: "تعذر تحديث عنوان المحفظة: " + updateErr.message };
+      }
+
+      // Log it
+      await supabase.from("purchase_verification_requests").insert({
+        user_id: userId,
+        wallet_address: walletAddress,
+        proof_url: "manual_link_relink",
+        status: "approved",
+        reviewed_at: new Date().toISOString(),
+      });
+
+      return { ok: true, message: "تم ربط وتحديث عنوان محفظتك بنجاح!" };
+    }
+    return { ok: true, message: "حسابك مفعل بالفعل ومحفظتك مربوطة." };
   }
 
   const settings = await getAppSettings();
