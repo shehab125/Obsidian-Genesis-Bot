@@ -427,6 +427,8 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
           }
           // Refetch active mining session to clear locked status
           fetchActiveMiningSession(p.user.id);
+          // Redirect to mining tab
+          changeTab("mining");
         }
       }
     } catch (err) {
@@ -910,7 +912,7 @@ function MiningScreen({
 
     const tick = () => {
       // 1. Cooldown checking
-      if (user.purchaseVerified && lastSessionStart && !activeSession) {
+      if (user.purchaseVerified && !user.cooldownBypassed && lastSessionStart && !activeSession) {
         const target = new Date(lastSessionStart).getTime() + 24 * 60 * 60 * 1000;
         const now = Date.now();
         const diff = target - now;
