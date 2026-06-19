@@ -1761,21 +1761,25 @@ async function awardRewardToUser(userId: string, amount: number) {
   if (!user) return null;
 
   const settings = await getAppSettings();
-  const nextBalance = user.balance + amount;
+  const nextBalance = Math.round(user.balance + amount);
   
-  const nextPending =
+  const nextPending = Math.round(
     settings.purchaseConditionEnabled && !user.purchaseVerified
       ? user.pendingBalance + amount
-      : user.pendingBalance;
+      : user.pendingBalance
+  );
       
-  const nextWithdrawable =
+  const nextWithdrawable = Math.round(
     settings.purchaseConditionEnabled && !user.purchaseVerified
       ? user.withdrawableBalance
-      : user.withdrawableBalance + amount;
+      : user.withdrawableBalance + amount
+  );
 
-  const nextLastCycleEarned = (user.lastCycleDoubled)
-    ? (user.lastCycleEarnedTokens ?? 0)
-    : (user.lastCycleEarnedTokens ?? 0) + amount;
+  const nextLastCycleEarned = Math.round(
+    user.lastCycleDoubled
+      ? (user.lastCycleEarnedTokens ?? 0)
+      : (user.lastCycleEarnedTokens ?? 0) + amount
+  );
 
   const { data } = await supabase
     .from("app_users")
@@ -1968,7 +1972,8 @@ export async function claimMiningSession(userId: string) {
 
   // Award the OBSD reward to the user
   const amount = Number(session.reward_tokens);
-  await awardRewardToUser(userId, amount);
+  const integerAmount = Math.round(amount);
+  await awardRewardToUser(userId, integerAmount);
 
   // Delete non-onboarding social task completions and submissions so they are unlocked for the next cycle
   const { data: socialTasks } = await supabase
@@ -1999,7 +2004,7 @@ export async function claimMiningSession(userId: string) {
     .update({
       mining_cycles_completed: nextCycles,
       purchase_verified: false,
-      last_cycle_earned_tokens: amount,
+      last_cycle_earned_tokens: integerAmount,
       last_cycle_doubled: false,
     })
     .eq("id", userId)
