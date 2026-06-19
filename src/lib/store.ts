@@ -1975,7 +1975,7 @@ export async function claimMiningSession(userId: string) {
 
   // Increment completed mining cycles and lock user
   const nextCycles = (user.miningCyclesCompleted || 0) + 1;
-  const { data: updatedUser } = await supabase
+  const { data: updatedUser, error: updateError } = await supabase
     .from("app_users")
     .update({
       mining_cycles_completed: nextCycles,
@@ -1986,6 +1986,11 @@ export async function claimMiningSession(userId: string) {
     .eq("id", userId)
     .select("*")
     .maybeSingle();
+
+  if (updateError) {
+    console.error("claimMiningSession: update app_users error:", updateError.message);
+    return { ok: false, message: "فشل تحديث بيانات المستخدم: " + updateError.message };
+  }
 
   return {
     ok: true,
