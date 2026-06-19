@@ -747,11 +747,20 @@ export function AdminDashboard({
                           <p className="text-[10px] text-[#31d67b] font-bold">
                             {row.miningCyclesCompleted || 0} cycles
                           </p>
-                          {isVerified && (
-                            <p className="text-[9px] text-emerald-400 font-bold mt-0.5">
-                              Reward: ${(settingsForm.baseRewardUsd || 1.00).toFixed(2)} USD
-                            </p>
-                          )}
+                          {(() => {
+                            const approvedCount = purchaseRows.filter(
+                              (p) => p.userId === row.id && p.status === "approved"
+                            ).length;
+                            if (approvedCount > 0) {
+                              const cumulativeRewardUsd = approvedCount * (settingsForm.baseRewardUsd || 1.00);
+                              return (
+                                <p className="text-[9px] text-emerald-400 font-bold mt-0.5">
+                                  Reward: ${cumulativeRewardUsd.toFixed(2)} USD
+                                </p>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                         <button
                           type="button"

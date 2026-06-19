@@ -207,6 +207,12 @@ async function getAdminData() {
     };
   }
 
+  try {
+    await checkAllHolders();
+  } catch (err) {
+    console.error("Failed to run hold check in getAdminData:", err);
+  }
+
   const settings = await getAppSettings();
 
   const [{ data: tasks }, { data: users }, { count: usersCount }] = await Promise.all([
@@ -250,6 +256,19 @@ async function getDataForUser(user: AppUser) {
     };
   }
 
+  let currentUser = user;
+  try {
+    const isHoldOk = await checkUserHoldStatus(user.id);
+    if (!isHoldOk) {
+      const reloadedUser = await getUserById(user.id);
+      if (reloadedUser) {
+        currentUser = reloadedUser;
+      }
+    }
+  } catch (err) {
+    console.error("Failed checkUserHoldStatus in getDataForUser:", err);
+  }
+
   const settings = await getAppSettings();
 
   const [
@@ -259,17 +278,17 @@ async function getDataForUser(user: AppUser) {
     { count: usersCount },
   ] = await Promise.all([
     supabase.from("tasks").select("*").eq("status", "active").order("created_at"),
-    supabase.from("task_completions").select("task_id").eq("user_id", user.id),
+    supabase.from("task_completions").select("task_id").eq("user_id", currentUser.id),
     supabase
       .from("review_submissions")
       .select("task_id,status")
-      .eq("user_id", user.id)
+      .eq("user_id", currentUser.id)
       .eq("status", "pending"),
     supabase.from("app_users").select("id", { count: "exact", head: true }),
   ]);
 
   return {
-    user,
+    user: currentUser,
     tasks: mapTasks(
       (tasks ?? []) as DbTask[],
       new Set((completions ?? []).map((item) => item.task_id as string)),
@@ -2328,9 +2347,19 @@ export async function runMiningNotificationsCheck() {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
+  // Run hold check
+  let holdCheckMsg = "";
+  try {
+    const holdResult = await checkAllHolders();
+    holdCheckMsg = ` Checked ${holdResult.checked} holders, revoked ${holdResult.revoked}.`;
+  } catch (err) {
+    console.error("Failed to run hold check in runMiningNotificationsCheck:", err);
+    holdCheckMsg = " Failed hold check execution.";
+  }
+
   return {
     ok: true,
-    message: `Mining check completed. Notified ${notifiedCount} users.`,
+    message: `Mining check completed. Notified ${notifiedCount} users.${holdCheckMsg}`,
   };
 }
 
@@ -2388,4 +2417,145 @@ export async function bypassReferralTask(userId: string, taskId: string) {
   await supabase.from("app_users").update({ onboarding_completed: true }).eq("id", userId);
 
   return { ok: true, message: "تم تخطي شرط الدعوات بنجاح. يمكنك الآن تفعيل محفظتك للشراء." };
+}
+
+export async function checkUserHoldStatus(userId: string): Promise<boolean> {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return true;
+
+  // 1. Fetch user from DB
+  const { data: userRaw, error: fetchErr } = await supabase
+    .from("app_users")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (fetchErr || !userRaw) {
+    return true; 
+  }
+
+  // Map to AppUser interface
+  const user = mapUser(userRaw as DbUser, 0);
+
+  if (!user || !user.unlockAt || !user.walletAddress) {
+    return true; // No active hold
+  }
+
+  // 2. Check if lock timer has expired
+  const now = new Date();
+  const unlockDate = new Date(user.unlockAt);
+  if (now >= unlockDate) {
+    return true; // Lock expired, hold successfully completed!
+  }
+
+  // 3. Get settings to know token price and contract address
+  const settings = await getAppSettings();
+  const contractAddress = settings.tokenContractAddress || "0x2a2c206ac686edd7d5b8cf1cf325de5261cd446f";
+
+  // 4. Get latest approved purchase request to find contractsCount
+  const { data: latestRequest } = await supabase
+    .from("purchase_verification_requests")
+    .select("id, proof_url")
+    .eq("user_id", userId)
+    .eq("status", "approved")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!latestRequest) {
+    return true; // No approved purchase found, nothing to check/revoke
+  }
+
+  let contractsCount = 1;
+  if (latestRequest.proof_url && latestRequest.proof_url.startsWith("Contracts: ")) {
+    contractsCount = parseInt(latestRequest.proof_url.replace("Contracts: ", ""), 10) || 1;
+  }
+
+  const verificationCycle = user.purchaseVerified ? user.miningCyclesCompleted : Math.max(0, user.miningCyclesCompleted - 1);
+  const plan = verificationCycle === 0
+    ? (settings.purchasePlans[0] || { minPurchase: 2, lockDays: 1, multiplier: 2.0 })
+    : (settings.purchasePlans[1] || settings.purchasePlans[0] || { minPurchase: 5, lockDays: 5, multiplier: 2.0 });
+
+  const finalContractsCount = verificationCycle === 0 ? 1 : contractsCount;
+  const requiredUsd = finalContractsCount * plan.minPurchase;
+  const requiredTokens = requiredUsd / (settings.tokenUsdPrice || 0.001);
+
+  // 5. Fetch actual balance on chain
+  let balance = 0;
+  try {
+    balance = await getErc20Balance(contractAddress, user.walletAddress);
+  } catch (err) {
+    console.error("Failed to fetch balance in checkUserHoldStatus:", err);
+    return true; // RPC error, assume ok to avoid false revokes
+  }
+
+  // If they hold less than required (allowing 2% tolerance for safety)
+  if (balance < requiredTokens * 0.98) {
+    console.log(`[HOLD CHECK] User ${user.name} (${userId}) failed hold check! Has ${balance} OBSD, needs ${requiredTokens} OBSD.`);
+
+    // Calculate reward tokens to revoke
+    const rewardTokens = Math.max(0, Math.floor(((user.boostMultiplier ?? 1.0) - 1.0) * (user.lastCycleEarnedTokens ?? 0)));
+
+    // Reject the latest approved request
+    await supabase
+      .from("purchase_verification_requests")
+      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+      .eq("id", latestRequest.id);
+
+    // Deduct from user balance
+    const nextBalance = Math.max(0, user.balance - rewardTokens);
+    const nextWithdrawable = Math.max(0, user.withdrawableBalance - rewardTokens);
+
+    await supabase
+      .from("app_users")
+      .update({
+        purchase_verified: false,
+        unlock_at: null,
+        boost_multiplier: 1.0,
+        cooldown_bypassed: false,
+        balance: nextBalance,
+        balance_withdrawable: nextWithdrawable,
+      })
+      .eq("id", userId);
+
+    // Log the revocation in audit_logs
+    try {
+      await supabase.from("audit_logs").insert({
+        user_id: userId,
+        action: "hold_failed_revoke_reward",
+        details: `Failed hold check. Balance: ${balance} OBSD, Required: ${requiredTokens} OBSD. Revoked ${rewardTokens} OBSD reward.`,
+      });
+    } catch {}
+
+    return false; // Hold failed
+  }
+
+  return true; // Hold is fine
+}
+
+export async function checkAllHolders() {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return { ok: false, message: "Database not connected" };
+
+  const now = new Date().toISOString();
+  const { data: users, error } = await supabase
+    .from("app_users")
+    .select("id")
+    .not("unlock_at", "is", null)
+    .gt("unlock_at", now);
+
+  if (error) {
+    console.error("Error fetching active holders:", error.message);
+    return { ok: false, message: error.message };
+  }
+
+  let failedCount = 0;
+  for (const user of (users || [])) {
+    const ok = await checkUserHoldStatus(user.id);
+    if (!ok) {
+      failedCount++;
+    }
+  }
+
+  return { ok: true, checked: users?.length || 0, revoked: failedCount };
 }
