@@ -200,6 +200,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
             balance: payload.balance ?? curr.balance,
             pendingBalance: payload.pendingBalance ?? curr.pendingBalance,
             withdrawableBalance: payload.withdrawableBalance ?? curr.withdrawableBalance,
+            purchaseVerified: false,
           }));
         }
         fetchActiveMiningSession(currentUser.id);
