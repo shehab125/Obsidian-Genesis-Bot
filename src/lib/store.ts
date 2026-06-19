@@ -1132,8 +1132,9 @@ export async function verifyUserPurchase(userId: string) {
     return { ok: false, message: "تعذر تحديث رصيد المستخدم: " + lastError.message };
   }
 
-  // 5. Influencer Commission Logic
-  if (user.influencerCode) {
+  // 5. Influencer Commission Logic (Only on the very first purchase verification/onboarding)
+  const isFirstVerification = (user.miningCyclesCompleted || 0) === 0;
+  if (user.influencerCode && isFirstVerification) {
     const { data: influencer } = await supabase
       .from("influencer_links")
       .select("*")
