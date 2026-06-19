@@ -557,6 +557,7 @@ export function MiniAppShell({ user, tasks, settings, leaderboard }: Props) {
               changeTab={changeTab}
               contractsCount={contractsCount}
               setContractsCount={setContractsCount}
+              message={message}
             />
           )}
           {activeTab === "nodes" && <NodesScreen user={currentUser} />}
@@ -1327,6 +1328,7 @@ function WalletScreen({
   changeTab,
   contractsCount,
   setContractsCount,
+  message,
 }: {
   user: AppUser;
   settings: AppSettings;
@@ -1344,6 +1346,7 @@ function WalletScreen({
   changeTab: (tab: any) => void;
   contractsCount: number;
   setContractsCount: (val: number) => void;
+  message?: string;
 }) {
   const referralLocked = false;
   const locked = settings.purchaseConditionEnabled && !user.purchaseVerified;
@@ -1614,6 +1617,11 @@ function WalletScreen({
                   Link & Save Wallet / حفظ وربط المحفظة
                 </button>
               )
+            )}
+            {message && (
+              <p className="mt-4 text-center text-xs font-bold text-[#ff8a00] leading-relaxed px-2">
+                {message}
+              </p>
             )}
           </section>
 
